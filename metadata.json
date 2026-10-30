@@ -1,0 +1,6 @@
+{
+  "name": "N.A Fresh Fruits & Coconuts",
+  "description": "Online storefront and admin management platform for pure tender coconut water and fresh fruits in Jaora.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
