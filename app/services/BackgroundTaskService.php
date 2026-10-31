@@ -155,8 +155,11 @@ class BackgroundTaskService {
                 if ($orderId > 0) {
                     $order = Order::getById($orderId);
                     if ($order) {
-                        $items = Order::getItems($orderId);
-                        $res = TelegramService::sendOrderNotification($order, $items);
+                        $event = $payload['event'] ?? 'order_placed';
+                        $res = TelegramService::sendOrderNotification($order, $items, $event);
+                        if (!empty($res['skipped'])) {
+                            return true;
+                        }
                         return !empty($res['success']);
                     }
                 }

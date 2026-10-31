@@ -435,6 +435,7 @@ try {
                             ]);
                             $updatedOrder = Order::getById((int)$order['id']);
                             Invoice::createForOrder($updatedOrder, $gatewayPaymentId);
+                            TelegramService::enqueueOrderNotification((int)$order['id'], 'order_paid');
 
                             $tx = PaymentTransaction::getByGatewayOrderId($gatewayOrderId);
                             if ($tx) {
@@ -1037,10 +1038,17 @@ try {
                     'whatsapp_popup_message' => trim($_POST['whatsapp_popup_message'] ?? 'Stay updated with fresh daily harvest arrivals, exclusive seasonal offers, and health tips!'),
                     'whatsapp_popup_button_text' => trim($_POST['whatsapp_popup_button_text'] ?? 'Join WhatsApp Channel'),
                     'whatsapp_popup_frequency' => in_array($_POST['whatsapp_popup_frequency'] ?? '', ['session', 'daily', 'weekly', 'always']) ? $_POST['whatsapp_popup_frequency'] : 'session',
-                    'telegram_notifications_enabled' => isset($_POST['telegram_notifications_enabled']) ? '1' : '0',
-                    'telegram_bot_token' => trim($_POST['telegram_bot_token'] ?? ''),
-                    'telegram_chat_id' => trim($_POST['telegram_chat_id'] ?? ''),
                 ];
+
+                $submittedTgToken = trim($_POST['telegram_bot_token'] ?? '');
+                $existingTgToken = Setting::get('telegram_bot_token', '');
+                $finalTgToken = ($submittedTgToken !== '') ? $submittedTgToken : $existingTgToken;
+
+                $settingsData['telegram_notifications_enabled'] = isset($_POST['telegram_notifications_enabled']) ? '1' : '0';
+                $settingsData['telegram_bot_token'] = $finalTgToken;
+                $settingsData['telegram_chat_id'] = trim($_POST['telegram_chat_id'] ?? '');
+                $settingsData['telegram_send_on_cod'] = isset($_POST['telegram_send_on_cod']) ? '1' : '0';
+                $settingsData['telegram_send_on_online_paid'] = isset($_POST['telegram_send_on_online_paid']) ? '1' : '0';
 
                 Setting::setMany($settingsData);
                 set_flash('success', 'Store delivery, business, and notification settings successfully saved.');

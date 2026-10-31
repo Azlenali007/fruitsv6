@@ -329,18 +329,17 @@ $settings = Setting::getAll();
             testing: false,
             testMsg: '',
             testSuccess: false,
+            showToken: false,
             runTest() {
-                const token = document.getElementById('tg_bot_token').value;
-                const chatId = document.getElementById('tg_chat_id').value;
-                if (!token || !chatId) {
-                    alert('Please enter both Bot Token and Chat ID to run a test.');
-                    return;
-                }
+                const token = document.getElementById('tg_bot_token').value.trim();
+                const chatId = document.getElementById('tg_chat_id').value.trim();
+                
                 this.testing = true;
                 this.testMsg = '';
                 const fd = new FormData();
-                fd.append('token', token);
-                fd.append('chat_id', chatId);
+                if (token) fd.append('token', token);
+                if (chatId) fd.append('chat_id', chatId);
+                
                 fetch('/admin/settings/telegram/test', {
                     method: 'POST',
                     body: fd
@@ -349,7 +348,9 @@ $settings = Setting::getAll();
                 .then(d => {
                     this.testing = false;
                     this.testSuccess = d.success;
-                    this.testMsg = d.success ? '✓ Test notification sent successfully to your Telegram chat!' : ('✗ Failed: ' + (d.error || 'Connection error'));
+                    this.testMsg = d.success 
+                        ? '✓ ' + (d.message || 'Test notification sent successfully to Telegram!') 
+                        : ('✗ Failed: ' + (d.error || 'Connection error'));
                 })
                 .catch(err => {
                     this.testing = false;
@@ -364,12 +365,12 @@ $settings = Setting::getAll();
                         ✈️
                     </div>
                     <div>
-                        <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Telegram Order Alerts (Future Integration)</h2>
-                        <p class="text-[11px] text-gray-400">Non-blocking background notifications dispatched asynchronously after order commit</p>
+                        <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Telegram Order Alerts</h2>
+                        <p class="text-[11px] text-gray-400">Automatic order notifications sent directly to your Telegram group or channel</p>
                     </div>
                 </div>
                 <span class="text-[10px] font-bold px-2.5 py-0.5 rounded-full <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600' ?>">
-                    <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'Enabled' : 'Disabled' ?>
+                    <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'Active' : 'Disabled' ?>
                 </span>
             </div>
 
@@ -384,26 +385,37 @@ $settings = Setting::getAll();
                     >
                     <div>
                         <span class="font-bold text-gray-900 block">Enable Instant Telegram Alerts</span>
-                        <span class="text-[11px] text-gray-500">Automatically enqueue Telegram messages when new Cash on Delivery orders are placed or online payments are captured.</span>
+                        <span class="text-[11px] text-gray-500">Automatically send rich Telegram order alerts with customer details, delivery address, items, and totals.</span>
                     </div>
                 </label>
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block font-bold text-gray-700 uppercase mb-1">Telegram Bot Token</label>
-                        <input 
-                            type="password" 
-                            id="tg_bot_token"
-                            name="telegram_bot_token" 
-                            value="<?= e($settings['telegram_bot_token'] ?? '') ?>" 
-                            placeholder="e.g. 123456789:ABCDefghIJKLmnOPQRstuvWXyz"
-                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                        >
-                        <span class="text-[10px] text-gray-400 mt-1 block">Created via @BotFather. Securely stored on server.</span>
+                        <div class="relative">
+                            <input 
+                                :type="showToken ? 'text' : 'password'" 
+                                id="tg_bot_token"
+                                name="telegram_bot_token" 
+                                value="<?= e($settings['telegram_bot_token'] ?? '') ?>" 
+                                placeholder="e.g. 123456789:ABCDefghIJKLmnOPQRstuvWXyz"
+                                class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 pr-10 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                            >
+                            <button 
+                                type="button" 
+                                @click="showToken = !showToken" 
+                                class="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 cursor-pointer"
+                                :title="showToken ? 'Hide token' : 'Show token'"
+                            >
+                                <span x-show="!showToken">👁️</span>
+                                <span x-show="showToken">🙈</span>
+                            </button>
+                        </div>
+                        <span class="text-[10px] text-gray-400 mt-1 block">Created via @BotFather. Saved securely on the server.</span>
                     </div>
 
                     <div>
-                        <label class="block font-bold text-gray-700 uppercase mb-1">Target Chat / Channel ID</label>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Target Chat / Channel / Group ID</label>
                         <input 
                             type="text" 
                             id="tg_chat_id"
@@ -412,19 +424,50 @@ $settings = Setting::getAll();
                             placeholder="e.g. -100123456789 or 98765432"
                             class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
                         >
-                        <span class="text-[10px] text-gray-400 mt-1 block">Chat or group ID where order notifications should be delivered.</span>
+                        <span class="text-[10px] text-gray-400 mt-1 block">Chat or group ID (e.g. group ID starting with minus sign like -100...).</span>
                     </div>
                 </div>
 
-                <div class="pt-2 flex items-center justify-between">
+                <!-- Event notification toggles -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <label class="flex items-center gap-2.5 p-3 bg-gray-50 border border-gray-200 rounded-2xl cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            name="telegram_send_on_cod" 
+                            value="1" 
+                            <?= ($settings['telegram_send_on_cod'] ?? '1') === '1' ? 'checked' : '' ?> 
+                            class="w-4 h-4 text-brand-600 rounded"
+                        >
+                        <div>
+                            <span class="font-bold text-gray-800 text-xs block">Cash on Delivery Orders</span>
+                            <span class="text-[10px] text-gray-500">Alert immediately when a customer places a COD order.</span>
+                        </div>
+                    </label>
+
+                    <label class="flex items-center gap-2.5 p-3 bg-gray-50 border border-gray-200 rounded-2xl cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            name="telegram_send_on_online_paid" 
+                            value="1" 
+                            <?= ($settings['telegram_send_on_online_paid'] ?? '1') === '1' ? 'checked' : '' ?> 
+                            class="w-4 h-4 text-brand-600 rounded"
+                        >
+                        <div>
+                            <span class="font-bold text-gray-800 text-xs block">Verified Online Payments</span>
+                            <span class="text-[10px] text-gray-500">Alert only after Razorpay signature verification succeeds.</span>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100">
                     <button 
                         type="button" 
                         @click="runTest()"
                         :disabled="testing"
-                        class="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-bold px-4 py-2 rounded-xl transition flex items-center gap-1.5 text-xs shadow-2xs disabled:opacity-50"
+                        class="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 text-xs shadow-2xs disabled:opacity-50 cursor-pointer"
                     >
                         <span x-show="!testing">⚡ Test Bot Notification</span>
-                        <span x-show="testing">Connecting...</span>
+                        <span x-show="testing">Connecting to Telegram...</span>
                     </button>
                     <span x-show="testMsg" x-text="testMsg" class="font-bold text-xs" :class="testSuccess ? 'text-emerald-700' : 'text-red-600'"></span>
                 </div>
