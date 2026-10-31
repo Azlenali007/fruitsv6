@@ -234,6 +234,9 @@ class OrderService {
             Invoice::createForOrder($orderRecord);
         }
 
+        // Enqueue future Telegram order notification asynchronously (post-commit, non-blocking)
+        TelegramService::enqueueOrderNotification($orderId, 'order_placed');
+
         return [
             'success' => true,
             'requires_razorpay' => false,

@@ -15,6 +15,10 @@ const phpProcess: ChildProcess = spawn(
   {
     stdio: ['ignore', 'inherit', 'inherit'],
     cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PHP_CLI_SERVER_WORKERS: '8',
+    },
   }
 );
 
@@ -79,6 +83,7 @@ app.use((req, res) => {
     headers: {
       ...req.headers,
       host: `${PHP_HOST}:${PHP_PORT}`,
+      connection: 'close',
       'x-forwarded-for': req.headers['x-forwarded-for'] || req.socket.remoteAddress || '',
       'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'http',
       'x-forwarded-host': req.headers.host || '',

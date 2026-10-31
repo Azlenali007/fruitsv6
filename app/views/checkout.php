@@ -151,42 +151,44 @@ $idempotencyKey = bin2hex(random_bytes(16));
             return;
         }
 
-        if (this.paymentMethod === 'cod') {
-            // Standard form submit for COD
-            this.isProcessing = true;
-            this.processingMessage = 'Placing Cash on Delivery order...';
-            return;
-        }
+        event.preventDefault();
+        this.isProcessing = true;
+        this.processingMessage = this.paymentMethod === 'online' 
+            ? 'Connecting to Razorpay secure checkout...' 
+            : 'Placing your Cash on Delivery order...';
 
-        if (this.paymentMethod === 'online') {
-            event.preventDefault();
-            this.isProcessing = true;
-            this.processingMessage = 'Connecting to Razorpay secure checkout...';
+        const form = event.target;
+        const formData = new FormData(form);
 
-            const form = event.target;
-            const formData = new FormData(form);
-
-            fetch('/checkout/place', {
-                method: 'POST',
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Accept': 'application/json'
-                },
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (!data.success) {
-                    this.isProcessing = false;
-                    alert(data.error || 'Failed to initiate payment.');
-                    if (data.auth_required) {
-                        window.location.href = '/login';
-                    }
-                    return;
+        fetch('/checkout/place', {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json'
+            },
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                this.isProcessing = false;
+                alert(data.error || 'Failed to place order.');
+                if (data.auth_required) {
+                    window.location.href = '/login';
                 }
+                return;
+            }
 
-                if (data.requires_razorpay) {
-                    const options = {
+            // Direct confirmation redirect for COD
+            if (data.redirect_url) {
+                this.processingMessage = 'Order confirmed! Loading your receipt...';
+                window.location.href = data.redirect_url;
+                return;
+            }
+
+            // Razorpay flow for Online
+            if (data.requires_razorpay) {
+                const options = {
                         key: data.razorpay_key_id,
                         amount: data.amount,
                         currency: data.currency || 'INR',
@@ -297,7 +299,7 @@ $idempotencyKey = bin2hex(random_bytes(16));
         <p class="text-[11px] text-red-600 pt-1">Please reposition your pin within our Jaora service zones or select an active locality from the list below.</p>
     </div>
 
-    <form action="/checkout/place" method="POST" @submit="handleCheckoutSubmit($event)" class="space-y-6">
+    <form action="/checkout/place" method="POST" data-no-loader @submit="handleCheckoutSubmit($event)" class="space-y-6">
         <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
         <input type="hidden" name="idempotency_key" value="<?= $idempotencyKey ?>">
         <input type="hidden" name="fulfilment_method" value="delivery">

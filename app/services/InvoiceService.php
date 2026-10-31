@@ -534,7 +534,7 @@ class InvoiceService {
 
     /**
      * Generate pure native PDF 1.4 bytecode without external libraries
-     * Returns raw PDF binary string
+     * Returns raw PDF binary string with professional A4 layout, clean wrapping, and accounting alignment
      */
     public static function generatePdfString($invoiceOrOrder, ?array $order = null, ?array $items = null): string {
         if ($order === null) {
@@ -551,199 +551,336 @@ class InvoiceService {
         }
 
         $invNumber = $invoice['invoice_number'] ?? 'NAF-BILL';
-        $filename = "Invoice-" . preg_replace('/[^A-Za-z0-9_-]/', '', $invNumber) . ".pdf";
-
         $storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
+        $storeTagline = Setting::get('store_tagline', 'Pure • Natural • Refreshing Fresh Tender Coconut Water');
         $storePhone = Setting::get('store_phone', '+91 98765 43210');
         $storeEmail = Setting::get('store_email', 'contact@nafruitsandcoconuts.com');
-        $storeAddress = Setting::get('store_address', '123, Green Park, Bhopal, MP');
+        $storeAddress = Setting::get('store_address', 'Station Road, Jaora, Madhya Pradesh - 457226');
 
-        $invDate = date('d M Y, h:i A', strtotime($invoice['invoice_date']));
-        $orderNumber = $order['order_number'] ?? ('#' . $order['id']);
-        $custName = $invoice['customer_name'];
-        $custPhone = $invoice['customer_phone'];
-        $address = $invoice['delivery_address'] ?: 'Customer address on record';
-        $areaName = $invoice['delivery_area_name'] ?: 'Jaora Area';
+        $invDate = !empty($invoice['invoice_date']) ? date('d M Y, h:i A', strtotime($invoice['invoice_date'])) : date('d M Y, h:i A');
+        $orderNumber = $order['order_number'] ?? ('#' . ($order['id'] ?? ''));
+        $custName = $invoice['customer_name'] ?? 'Valued Customer';
+        $custPhone = $invoice['customer_phone'] ?? '';
+        $custEmail = !empty($invoice['customer_email']) ? $invoice['customer_email'] : '';
+        $address = !empty($invoice['delivery_address']) ? $invoice['delivery_address'] : 'Customer address on record';
+        $areaName = !empty($invoice['delivery_area_name']) ? $invoice['delivery_area_name'] : 'Jaora Service Zone';
 
-        $subtotal = number_format((float)$invoice['subtotal'], 2);
-        $discount = (float)$invoice['discount_amount'];
-        $deliveryCharge = (float)$invoice['delivery_charge'];
-        $total = number_format((float)$invoice['total_amount'], 2);
+        $subtotalVal = (float)$invoice['subtotal'];
+        $discountVal = (float)$invoice['discount_amount'];
+        $deliveryVal = (float)$invoice['delivery_charge'];
+        $totalVal = (float)$invoice['total_amount'];
 
-        $payMethod = $invoice['payment_method'];
-        $payStatus = $invoice['payment_status'];
+        $payMethod = $invoice['payment_method'] ?? 'Cash on Delivery';
+        $payStatus = $invoice['payment_status'] ?? 'Payment Pending';
         $isPaid = str_contains(strtolower($payStatus), 'paid') && !str_contains(strtolower($payStatus), 'pending');
-        $payRef = $invoice['payment_reference'] ?: '-';
+        $payRef = !empty($invoice['payment_reference']) ? $invoice['payment_reference'] : '-';
 
-        // Build clean PDF stream content
-        // Standard A4: Width = 595.28 pt, Height = 841.89 pt
-        // Margins: Left = 40, Right = 555
-        $p = [];
-        
-        // Header Rectangle in Emerald (#235d3a -> 0.137, 0.365, 0.227)
-        $p[] = "q";
-        $p[] = "0.137 0.365 0.227 rg";
-        $p[] = "40 730 515 80 re f";
-        $p[] = "Q";
+        // Layout Geometry
+        $pageW = 595.28;
+        $pageH = 841.89;
+        $mLeft = 36.0;
+        $mRight = 559.28;
+        $cWidth = 523.28;
 
-        // Header Text
-        $p[] = "BT";
-        $p[] = "/F2 18 Tf";
-        $p[] = "1 1 1 rg";
-        $p[] = "55 780 Td";
-        $p[] = "(" . self::escapePdfText($storeName) . ") Tj";
-        $p[] = "ET";
+        // Pages collector: array of array of PDF stream commands
+        $pages = [];
+        $currentPageOps = [];
 
-        $p[] = "BT";
-        $p[] = "/F1 9 Tf";
-        $p[] = "0.82 0.98 0.89 rg";
-        $p[] = "55 765 Td";
-        $p[] = "(Pure . Natural . Refreshing Fresh Tender Coconut Water) Tj";
-        $p[] = "ET";
+        // Helper to add header on a page
+        $renderHeader = function(int $pageNum, int $totalEstPages = 1) use (
+            &$currentPageOps, $mLeft, $cWidth, $storeName, $storeTagline, $storeAddress, $storePhone,
+            $invNumber, $invDate, $orderNumber
+        ) {
+            $hY = 728.0;
+            $hH = 78.0;
 
-        $p[] = "BT";
-        $p[] = "/F1 8 Tf";
-        $p[] = "0.9 0.9 0.9 rg";
-        $p[] = "55 745 Td";
-        $p[] = "(" . self::escapePdfText($storeAddress . " | Tel: " . $storePhone) . ") Tj";
-        $p[] = "ET";
+            // Emerald Header Background
+            $currentPageOps[] = "q 0.137 0.365 0.227 rg {$mLeft} {$hY} {$cWidth} {$hH} re f Q";
 
-        // Invoice Meta on Right
-        $p[] = "BT";
-        $p[] = "/F2 14 Tf";
-        $p[] = "1 1 1 rg";
-        $p[] = "370 780 Td";
-        $p[] = "(TAX INVOICE) Tj";
-        $p[] = "ET";
+            // Left: Store Branding
+            $currentPageOps[] = "BT /F2 15 Tf 1 1 1 rg 50 782 Td (" . self::escapePdfText($storeName) . ") Tj ET";
+            $currentPageOps[] = "BT /F1 8 Tf 0.78 0.93 0.82 rg 50 767 Td (" . self::escapePdfText($storeTagline) . ") Tj ET";
+            $currentPageOps[] = "BT /F1 7.5 Tf 0.90 0.94 0.91 rg 50 748 Td (" . self::escapePdfText($storeAddress . " | Tel: " . $storePhone) . ") Tj ET";
 
-        $p[] = "BT";
-        $p[] = "/F2 11 Tf";
-        $p[] = "1 1 1 rg";
-        $p[] = "370 762 Td";
-        $p[] = "(" . self::escapePdfText($invNumber) . ") Tj";
-        $p[] = "ET";
+            // Right: Invoice Meta
+            $currentPageOps[] = "BT /F2 12 Tf 1 1 1 rg 380 782 Td (TAX INVOICE / BILL) Tj ET";
+            $currentPageOps[] = "BT /F2 9.5 Tf 1 1 1 rg 380 766 Td (Invoice: " . self::escapePdfText($invNumber) . ") Tj ET";
+            $currentPageOps[] = "BT /F1 7.5 Tf 0.78 0.93 0.82 rg 380 752 Td (Date: " . self::escapePdfText($invDate) . ") Tj ET";
+            $currentPageOps[] = "BT /F1 7.5 Tf 0.78 0.93 0.82 rg 380 740 Td (Order Ref: #" . self::escapePdfText($orderNumber) . ") Tj ET";
+        };
 
-        $p[] = "BT";
-        $p[] = "/F1 8 Tf";
-        $p[] = "0.82 0.98 0.89 rg";
-        $p[] = "370 746 Td";
-        $p[] = "(Date: " . self::escapePdfText($invDate) . ") Tj";
-        $p[] = "ET";
+        // Render Page 1 Header
+        $renderHeader(1);
 
-        $p[] = "BT";
-        $p[] = "/F1 8 Tf";
-        $p[] = "0.82 0.98 0.89 rg";
-        $p[] = "370 735 Td";
-        $p[] = "(Order Ref: #" . self::escapePdfText($orderNumber) . ") Tj";
-        $p[] = "ET";
+        // Page 1 Customer & Delivery Cards
+        $cardY = 642.0;
+        $cardH = 74.0;
+        $currentPageOps[] = "q 0.976 0.980 0.984 rg {$mLeft} {$cardY} {$cWidth} {$cardH} re f Q";
+        $currentPageOps[] = "q 0.88 0.90 0.89 RG 0.8 w {$mLeft} {$cardY} {$cWidth} {$cardH} re s Q";
+        // Divider line between Billed To and Deliver To
+        $cardTop = $cardY + $cardH;
+        $currentPageOps[] = "q 0.88 0.90 0.89 RG 0.6 w 295 {$cardY} m 295 {$cardTop} l S Q";
 
-        // Customer & Delivery Details Section
-        $p[] = "q 0.96 0.96 0.96 rg 40 655 515 60 re f Q";
-        $p[] = "q 0.85 0.85 0.85 RG 1 w 40 655 515 60 re s Q";
+        // Billed To Column
+        $currentPageOps[] = "BT /F2 7.5 Tf 0.45 0.50 0.48 rg 50 698 Td (BILLED TO / CUSTOMER) Tj ET";
+        $currentPageOps[] = "BT /F2 10 Tf 0.12 0.16 0.22 rg 50 683 Td (" . self::escapePdfText($custName) . ") Tj ET";
+        $currentPageOps[] = "BT /F1 8.5 Tf 0.30 0.35 0.32 rg 50 669 Td (Phone: " . self::escapePdfText($custPhone) . ") Tj ET";
+        if (!empty($custEmail)) {
+            $currentPageOps[] = "BT /F1 7.5 Tf 0.45 0.50 0.48 rg 50 656 Td (Email: " . self::escapePdfText($custEmail) . ") Tj ET";
+        }
 
-        $p[] = "BT /F2 8 Tf 0.5 0.5 0.5 rg 55 700 Td (BILLED TO:) Tj ET";
-        $p[] = "BT /F2 10 Tf 0.1 0.1 0.1 rg 55 686 Td (" . self::escapePdfText($custName) . ") Tj ET";
-        $p[] = "BT /F1 9 Tf 0.3 0.3 0.3 rg 55 672 Td (Phone: " . self::escapePdfText($custPhone) . ") Tj ET";
-
-        $p[] = "BT /F2 8 Tf 0.5 0.5 0.5 rg 300 700 Td (DELIVERY ADDRESS:) Tj ET";
-        $p[] = "BT /F1 9 Tf 0.2 0.2 0.2 rg 300 686 Td (" . self::escapePdfText(substr($address, 0, 45)) . ") Tj ET";
-        $p[] = "BT /F1 9 Tf 0.2 0.2 0.2 rg 300 672 Td (Locality: " . self::escapePdfText($areaName) . ") Tj ET";
+        // Deliver To Column
+        $currentPageOps[] = "BT /F2 7.5 Tf 0.45 0.50 0.48 rg 310 698 Td (DELIVERY DESTINATION) Tj ET";
+        $currentPageOps[] = "BT /F2 9.5 Tf 0.12 0.16 0.22 rg 310 683 Td (" . self::escapePdfText($areaName) . ") Tj ET";
+        $addrLines = self::wrapText($address, 230.0, 7.5);
+        $addrY = 669.0;
+        foreach (array_slice($addrLines, 0, 2) as $al) {
+            $currentPageOps[] = "BT /F1 7.5 Tf 0.35 0.40 0.38 rg 310 {$addrY} Td (" . self::escapePdfText($al) . ") Tj ET";
+            $addrY -= 11.0;
+        }
 
         // Table Header
-        $tableY = 625;
-        $p[] = "q 0.93 0.95 0.93 rg 40 {$tableY} 515 22 re f Q";
-        $p[] = "q 0.8 0.85 0.8 RG 1 w 40 {$tableY} 515 22 re s Q";
+        $tableHeaderY = 608.0;
+        $thH = 22.0;
+        $renderTableHeader = function($tY) use (&$currentPageOps, $mLeft, $cWidth, $thH) {
+            $boxY = $tY - $thH;
+            $currentPageOps[] = "q 0.92 0.96 0.93 rg {$mLeft} {$boxY} {$cWidth} {$thH} re f Q";
+            $currentPageOps[] = "q 0.78 0.86 0.80 RG 0.8 w {$mLeft} {$boxY} {$cWidth} {$thH} re s Q";
 
-        $p[] = "BT /F2 9 Tf 0.137 0.365 0.227 rg 50 " . ($tableY + 7) . " Td (#) Tj ET";
-        $p[] = "BT /F2 9 Tf 0.137 0.365 0.227 rg 80 " . ($tableY + 7) . " Td (ITEM DESCRIPTION) Tj ET";
-        $p[] = "BT /F2 9 Tf 0.137 0.365 0.227 rg 330 " . ($tableY + 7) . " Td (UNIT PRICE) Tj ET";
-        $p[] = "BT /F2 9 Tf 0.137 0.365 0.227 rg 420 " . ($tableY + 7) . " Td (QTY) Tj ET";
-        $p[] = "BT /F2 9 Tf 0.137 0.365 0.227 rg 480 " . ($tableY + 7) . " Td (AMOUNT) Tj ET";
+            $textY = $boxY + 7.0;
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.365 0.227 rg 46 {$textY} Td (#) Tj ET";
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.365 0.227 rg 72 {$textY} Td (ITEM DESCRIPTION) Tj ET";
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.365 0.227 rg 330 {$textY} Td (UNIT PRICE) Tj ET";
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.365 0.227 rg 412 {$textY} Td (QTY) Tj ET";
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.365 0.227 rg 495 {$textY} Td (AMOUNT) Tj ET";
+        };
 
-        // Table Rows
-        $rowY = $tableY;
+        $renderTableHeader($tableHeaderY);
+        $currY = $tableHeaderY - $thH;
+
+        // Render Table Rows with Dynamic Wrapping and Height
         $idx = 1;
         foreach ($items as $item) {
-            $rowY -= 24;
-            $p[] = "q 0.9 0.9 0.9 RG 0.5 w 40 {$rowY} 515 24 re s Q";
-            $p[] = "BT /F1 9 Tf 0.4 0.4 0.4 rg 50 " . ($rowY + 8) . " Td ({$idx}) Tj ET";
-            $p[] = "BT /F2 9 Tf 0.1 0.1 0.1 rg 80 " . ($rowY + 8) . " Td (" . self::escapePdfText($item['product_name']) . ") Tj ET";
-            $p[] = "BT /F1 9 Tf 0.2 0.2 0.2 rg 330 " . ($rowY + 8) . " Td (Rs. " . number_format((float)$item['unit_price'], 2) . ") Tj ET";
-            $p[] = "BT /F2 9 Tf 0.1 0.1 0.1 rg 425 " . ($rowY + 8) . " Td (" . (int)$item['quantity'] . ") Tj ET";
-            $p[] = "BT /F2 9 Tf 0.1 0.1 0.1 rg 480 " . ($rowY + 8) . " Td (Rs. " . number_format((float)$item['subtotal'], 2) . ") Tj ET";
+            $pName = trim((string)$item['product_name']);
+            $uPrice = (float)$item['unit_price'];
+            $qty = (int)$item['quantity'];
+            $lineSubtotal = (float)$item['subtotal'];
+
+            // Wrap product description cleanly to 245pt column
+            $nameLines = self::wrapText($pName, 245.0, 8.5, true);
+            $lineCount = count($nameLines);
+            $rowH = max(24.0, ($lineCount * 12.0) + 10.0);
+
+            // Check if page break needed (leave room for summary if last item)
+            if (($currY - $rowH) < 140.0) {
+                // Add page footer to current page
+                $currentPageOps[] = "BT /F1 7.5 Tf 0.5 0.5 0.5 rg 260 25 Td (Continued on next page...) Tj ET";
+                $pages[] = $currentPageOps;
+                $currentPageOps = [];
+
+                // Start new page
+                $renderHeader(count($pages) + 1);
+                $currY = 710.0;
+                $renderTableHeader($currY);
+                $currY -= $thH;
+            }
+
+            $rowBoxY = $currY - $rowH;
+
+            // Row background and border
+            $bgFill = ($idx % 2 === 0) ? "0.985 0.990 0.985 rg" : "1 1 1 rg";
+            $currentPageOps[] = "q {$bgFill} {$mLeft} {$rowBoxY} {$cWidth} {$rowH} re f Q";
+            $currentPageOps[] = "q 0.90 0.91 0.90 RG 0.5 w {$mLeft} {$rowBoxY} {$cWidth} {$rowH} re s Q";
+
+            // Row vertical text baseline
+            $topTextY = $currY - 15.0;
+
+            // # Index
+            $currentPageOps[] = "BT /F1 8.5 Tf 0.45 0.50 0.48 rg 48 {$topTextY} Td ({$idx}) Tj ET";
+
+            // Product Name (multi-line)
+            $pTextY = $topTextY;
+            foreach ($nameLines as $nl) {
+                $currentPageOps[] = "BT /F2 8.5 Tf 0.12 0.16 0.22 rg 72 {$pTextY} Td (" . self::escapePdfText($nl) . ") Tj ET";
+                $pTextY -= 12.0;
+            }
+
+            // Unit Price (Right Aligned in column 330-385)
+            $uPriceStr = "Rs. " . number_format($uPrice, 2);
+            $currentPageOps[] = "BT /F1 8.5 Tf 0.25 0.30 0.28 rg 335 {$topTextY} Td (" . self::escapePdfText($uPriceStr) . ") Tj ET";
+
+            // Quantity (Centered in column 400-440)
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.12 0.16 0.22 rg 420 {$topTextY} Td ({$qty}) Tj ET";
+
+            // Line Amount (Right Aligned in column 450-545)
+            $amtStr = "Rs. " . number_format($lineSubtotal, 2);
+            $currentPageOps[] = "BT /F2 9.0 Tf 0.12 0.16 0.22 rg 488 {$topTextY} Td (" . self::escapePdfText($amtStr) . ") Tj ET";
+
+            $currY -= $rowH;
             $idx++;
         }
 
-        // Summary Section
-        $sumY = $rowY - 20;
-        $p[] = "BT /F1 9 Tf 0.3 0.3 0.3 rg 350 " . ($sumY) . " Td (Items Subtotal:) Tj ET";
-        $p[] = "BT /F1 9 Tf 0.1 0.1 0.1 rg 480 " . ($sumY) . " Td (Rs. {$subtotal}) Tj ET";
-
-        if ($discount > 0) {
-            $sumY -= 16;
-            $p[] = "BT /F1 9 Tf 0.1 0.6 0.2 rg 350 " . ($sumY) . " Td (Coupon Discount:) Tj ET";
-            $p[] = "BT /F2 9 Tf 0.1 0.6 0.2 rg 480 " . ($sumY) . " Td (-Rs. " . number_format($discount, 2) . ") Tj ET";
+        // Check if room for summary block (needs ~110 pt)
+        if (($currY - 110.0) < 60.0) {
+            $pages[] = $currentPageOps;
+            $currentPageOps = [];
+            $renderHeader(count($pages) + 1);
+            $currY = 700.0;
         }
 
-        $sumY -= 16;
-        $p[] = "BT /F1 9 Tf 0.3 0.3 0.3 rg 350 " . ($sumY) . " Td (Delivery Charge:) Tj ET";
-        $delText = $deliveryCharge <= 0 ? "FREE" : "Rs. " . number_format($deliveryCharge, 2);
-        $p[] = "BT /F1 9 Tf 0.1 0.1 0.1 rg 480 " . ($sumY) . " Td ({$delText}) Tj ET";
+        // Summary and Payment Section
+        $secY = $currY - 12.0;
 
-        $sumY -= 20;
-        $p[] = "q 0.137 0.365 0.227 RG 1.5 w 340 {$sumY} 215 0 m 555 {$sumY} l s Q";
+        // Left Box: Payment Details Box (X: 36, W: 260)
+        $payBoxY = $secY - 86.0;
+        $payBoxH = 86.0;
+        $currentPageOps[] = "q 0.976 0.980 0.984 rg {$mLeft} {$payBoxY} 265 {$payBoxH} re f Q";
+        $currentPageOps[] = "q 0.88 0.90 0.89 RG 0.8 w {$mLeft} {$payBoxY} 265 {$payBoxH} re s Q";
 
-        $sumY -= 18;
-        $p[] = "BT /F2 12 Tf 0.137 0.365 0.227 rg 350 " . ($sumY) . " Td (FINAL PAYABLE:) Tj ET";
-        $p[] = "BT /F2 12 Tf 0.137 0.365 0.227 rg 480 " . ($sumY) . " Td (Rs. {$total}) Tj ET";
+        $currentPageOps[] = "BT /F2 7.5 Tf 0.45 0.50 0.48 rg 48 " . ($payBoxY + 68) . " Td (PAYMENT INFORMATION) Tj ET";
+        $currentPageOps[] = "BT /F2 8.5 Tf 0.12 0.16 0.22 rg 48 " . ($payBoxY + 52) . " Td (Method: " . self::escapePdfText($payMethod) . ") Tj ET";
+        $currentPageOps[] = "BT /F1 7.5 Tf 0.40 0.45 0.42 rg 48 " . ($payBoxY + 38) . " Td (Reference: " . self::escapePdfText(substr($payRef, 0, 32)) . ") Tj ET";
 
-        // Payment status block
-        $payY = $sumY - 45;
-        $p[] = "q 0.97 0.97 0.97 rg 40 {$payY} 515 36 re f Q";
-        $p[] = "q 0.85 0.85 0.85 RG 1 w 40 {$payY} 515 36 re s Q";
+        // Status Badge Pill
+        $badgeBg = $isPaid ? "0.85 0.96 0.88 rg" : "0.99 0.95 0.86 rg";
+        $badgeBorder = $isPaid ? "0.35 0.75 0.45 RG" : "0.85 0.60 0.20 RG";
+        $badgeTextCol = $isPaid ? "0.08 0.50 0.20 rg" : "0.70 0.35 0.05 rg";
+        $currentPageOps[] = "q {$badgeBg} 48 " . ($payBoxY + 12) . " 240 18 re f Q";
+        $currentPageOps[] = "q {$badgeBorder} 0.8 w 48 " . ($payBoxY + 12) . " 240 18 re s Q";
+        $statusLabel = $isPaid ? "PAID - Verified Online Transaction" : "PAYMENT PENDING (Payable on Delivery)";
+        $currentPageOps[] = "BT /F2 7.5 Tf {$badgeTextCol} 56 " . ($payBoxY + 17) . " Td (" . self::escapePdfText($statusLabel) . ") Tj ET";
 
-        $p[] = "BT /F2 8 Tf 0.5 0.5 0.5 rg 55 " . ($payY + 22) . " Td (PAYMENT METHOD) Tj ET";
-        $p[] = "BT /F2 9 Tf 0.1 0.1 0.1 rg 55 " . ($payY + 10) . " Td (" . self::escapePdfText($payMethod) . " | Ref: " . self::escapePdfText(substr($payRef, 0, 28)) . ") Tj ET";
+        // Right Box: Financial Totals Summary (X: 315 to 559.28)
+        $totY = $secY;
+        $currentPageOps[] = "BT /F1 8.5 Tf 0.40 0.45 0.42 rg 330 {$totY} Td (Items Subtotal:) Tj ET";
+        $currentPageOps[] = "BT /F1 8.5 Tf 0.12 0.16 0.22 rg 488 {$totY} Td (Rs. " . number_format($subtotalVal, 2) . ") Tj ET";
 
-        $p[] = "BT /F2 8 Tf 0.5 0.5 0.5 rg 350 " . ($payY + 22) . " Td (PAYMENT STATUS) Tj ET";
-        $statusColor = $isPaid ? "0.08 0.5 0.2" : "0.7 0.3 0.0";
-        $p[] = "BT /F2 9 Tf {$statusColor} rg 350 " . ($payY + 10) . " Td (" . self::escapePdfText($payStatus) . ") Tj ET";
+        if ($discountVal > 0) {
+            $totY -= 15.0;
+            $currentPageOps[] = "BT /F1 8.5 Tf 0.137 0.50 0.25 rg 330 {$totY} Td (Coupon Discount:) Tj ET";
+            $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.50 0.25 rg 485 {$totY} Td (-Rs. " . number_format($discountVal, 2) . ") Tj ET";
+        }
 
-        // Thank you footer
-        $footY = 100;
-        $p[] = "q 0.88 0.88 0.88 RG 0.5 w 40 {$footY} 515 0 m 555 {$footY} l s Q";
-        $p[] = "BT /F2 10 Tf 0.137 0.365 0.227 rg 190 " . ($footY - 20) . " Td (Thank you for choosing N.A Fresh Fruits & Coconuts!) Tj ET";
-        $p[] = "BT /F1 8 Tf 0.5 0.5 0.5 rg 180 " . ($footY - 34) . " Td (For queries, delivery updates or support, contact " . self::escapePdfText($storePhone) . ") Tj ET";
+        $totY -= 15.0;
+        $delText = $deliveryVal <= 0 ? "FREE" : "Rs. " . number_format($deliveryVal, 2);
+        $currentPageOps[] = "BT /F1 8.5 Tf 0.40 0.45 0.42 rg 330 {$totY} Td (Delivery Charge:) Tj ET";
+        $currentPageOps[] = "BT /F1 8.5 Tf 0.12 0.16 0.22 rg 488 {$totY} Td ({$delText}) Tj ET";
 
-        $streamContent = implode("\n", $p);
-        $streamLength = strlen($streamContent);
+        $totY -= 14.0;
+        // Final divider bar in emerald
+        $currentPageOps[] = "q 0.137 0.365 0.227 RG 1.2 w 320 {$totY} m 559 {$totY} l S Q";
 
-        // Build valid PDF 1.4 Object Graph
+        $totY -= 16.0;
+        $currentPageOps[] = "BT /F2 11 Tf 0.137 0.365 0.227 rg 330 {$totY} Td (FINAL PAYABLE:) Tj ET";
+        $currentPageOps[] = "BT /F2 12 Tf 0.137 0.365 0.227 rg 478 {$totY} Td (Rs. " . number_format($totalVal, 2) . ") Tj ET";
+
+        // Footer at bottom of page
+        $footY = 45.0;
+        $currentPageOps[] = "q 0.88 0.90 0.89 RG 0.5 w {$mLeft} {$footY} m {$mRight} {$footY} l S Q";
+        $currentPageOps[] = "BT /F2 8.5 Tf 0.137 0.365 0.227 rg 170 " . ($footY - 14) . " Td (Thank you for choosing N.A Fresh Fruits & Coconuts!) Tj ET";
+        $currentPageOps[] = "BT /F1 7.5 Tf 0.45 0.50 0.48 rg 140 " . ($footY - 25) . " Td (For queries or delivery updates, call " . self::escapePdfText($storePhone) . " or email " . self::escapePdfText($storeEmail) . ") Tj ET";
+
+        $pages[] = $currentPageOps;
+        $totalPages = count($pages);
+
+        // Build valid multi-page PDF 1.4 Object Graph
         $objects = [];
-        $objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
-        $objects[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
-        $objects[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>";
-        $objects[4] = "<< /Length {$streamLength} >>\nstream\n{$streamContent}\nendstream";
-        $objects[5] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-        $objects[6] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
+        $objIdx = 1;
 
+        // Object 1: Catalog
+        $catalogObj = $objIdx++;
+        // Object 2: Pages
+        $pagesObj = $objIdx++;
+
+        $pageObjIds = [];
+        $contentObjIds = [];
+
+        for ($p = 0; $p < $totalPages; $p++) {
+            $pageObjIds[] = $objIdx++;
+            $contentObjIds[] = $objIdx++;
+        }
+
+        $fontF1 = $objIdx++;
+        $fontF2 = $objIdx++;
+
+        // Fill objects
+        $kidsStr = implode(' ', array_map(fn($id) => "{$id} 0 R", $pageObjIds));
+        $objects[$catalogObj] = "<< /Type /Catalog /Pages {$pagesObj} 0 R >>";
+        $objects[$pagesObj] = "<< /Type /Pages /Kids [{$kidsStr}] /Count {$totalPages} >>";
+
+        for ($p = 0; $p < $totalPages; $p++) {
+            $pageId = $pageObjIds[$p];
+            $contentId = $contentObjIds[$p];
+
+            // Add page numbering to each page stream
+            $pNum = $p + 1;
+            $pStreamOps = $pages[$p];
+            $pStreamOps[] = "BT /F1 7.5 Tf 0.55 0.58 0.55 rg 520 20 Td (Page {$pNum} of {$totalPages}) Tj ET";
+
+            $streamBody = implode("\n", $pStreamOps);
+            $streamLen = strlen($streamBody);
+
+            $objects[$pageId] = "<< /Type /Page /Parent {$pagesObj} 0 R /MediaBox [0 0 595.28 841.89] /Contents {$contentId} 0 R /Resources << /Font << /F1 {$fontF1} 0 R /F2 {$fontF2} 0 R >> >> >>";
+            $objects[$contentId] = "<< /Length {$streamLen} >>\nstream\n{$streamBody}\nendstream";
+        }
+
+        $objects[$fontF1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+        $objects[$fontF2] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+
+        // Assemble binary PDF output with precise byte offsets
         $output = "%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
         $offsets = [];
-        
-        for ($i = 1; $i <= 6; $i++) {
+
+        $totalObjCount = $objIdx - 1;
+        for ($i = 1; $i <= $totalObjCount; $i++) {
             $offsets[$i] = strlen($output);
             $output .= "{$i} 0 obj\n" . $objects[$i] . "\nendobj\n";
         }
 
         $xrefOffset = strlen($output);
-        $output .= "xref\n0 7\n";
+        $output .= "xref\n0 " . ($totalObjCount + 1) . "\n";
         $output .= "0000000000 65535 f \n";
-        for ($i = 1; $i <= 6; $i++) {
+        for ($i = 1; $i <= $totalObjCount; $i++) {
             $output .= sprintf("%010d 00000 n \n", $offsets[$i]);
         }
-        $output .= "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{$xrefOffset}\n%%EOF";
+        $output .= "trailer\n<< /Size " . ($totalObjCount + 1) . " /Root {$catalogObj} 0 R >>\nstartxref\n{$xrefOffset}\n%%EOF";
 
         return $output;
+    }
+
+    /**
+     * Wrap text cleanly into multiple lines based on maximum column width
+     */
+    public static function wrapText(string $text, float $maxWidth, float $fontSize, bool $bold = false): array {
+        $avgCharW = $fontSize * ($bold ? 0.53 : 0.48);
+        $maxChars = max(10, (int)floor($maxWidth / $avgCharW));
+
+        $cleanText = str_replace(["\r\n", "\r", "\n"], ' ', $text);
+        $words = preg_split('/\s+/', trim($cleanText));
+        $lines = [];
+        $cur = '';
+
+        foreach ($words as $w) {
+            if ($w === '') continue;
+            $test = $cur === '' ? $w : ($cur . ' ' . $w);
+            if (strlen($test) <= $maxChars) {
+                $cur = $test;
+            } else {
+                if ($cur !== '') {
+                    $lines[] = $cur;
+                }
+                while (strlen($w) > $maxChars) {
+                    $lines[] = substr($w, 0, $maxChars);
+                    $w = substr($w, $maxChars);
+                }
+                $cur = $w;
+            }
+        }
+        if ($cur !== '') {
+            $lines[] = $cur;
+        }
+
+        return !empty($lines) ? $lines : [''];
     }
 
     /**
@@ -768,7 +905,6 @@ class InvoiceService {
         $filename = "Invoice-" . preg_replace('/[^A-Za-z0-9_-]/', '', $invNumber) . ".pdf";
         $output = self::generatePdfString($invoice, $order, $items);
 
-        // Clean any output buffers
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
@@ -782,11 +918,24 @@ class InvoiceService {
         exit;
     }
 
-    private static function escapePdfText(string $text): string {
+    /**
+     * Escape and clean text for PDF Type 1 Helvetica font
+     */
+    public static function escapePdfText(string $text): string {
+        $text = str_replace(["\r\n", "\r", "\n"], ' ', $text);
+        $text = str_replace(['‘', '’', '`'], "'", $text);
+        $text = str_replace(['“', '”'], '"', $text);
+        $text = str_replace(['–', '—'], '-', $text);
+        $text = str_replace('•', '.', $text);
+        $text = str_replace('₹', 'Rs. ', $text);
+
+        // Escape PDF syntax characters
         $text = str_replace('\\', '\\\\', $text);
         $text = str_replace('(', '\\(', $text);
         $text = str_replace(')', '\\)', $text);
-        // Clean to ASCII compatible representation
-        return preg_replace('/[^\x20-\x7E]/', '', $text);
+
+        // Keep printable characters
+        $clean = preg_replace('/[^\x20-\x7E]/', '', $text);
+        return trim($clean);
     }
 }

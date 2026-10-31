@@ -379,6 +379,9 @@ try {
                 $updatedOrder = Order::getById((int)$order['id']);
                 Invoice::createForOrder($updatedOrder, $razorpayPaymentId);
 
+                // Enqueue future Telegram order notification asynchronously (post-commit, non-blocking)
+                TelegramService::enqueueOrderNotification((int)$order['id'], 'order_paid');
+
                 CartService::clear();
 
                 json_response([
@@ -1034,14 +1037,28 @@ try {
                     'whatsapp_popup_message' => trim($_POST['whatsapp_popup_message'] ?? 'Stay updated with fresh daily harvest arrivals, exclusive seasonal offers, and health tips!'),
                     'whatsapp_popup_button_text' => trim($_POST['whatsapp_popup_button_text'] ?? 'Join WhatsApp Channel'),
                     'whatsapp_popup_frequency' => in_array($_POST['whatsapp_popup_frequency'] ?? '', ['session', 'daily', 'weekly', 'always']) ? $_POST['whatsapp_popup_frequency'] : 'session',
+                    'telegram_notifications_enabled' => isset($_POST['telegram_notifications_enabled']) ? '1' : '0',
+                    'telegram_bot_token' => trim($_POST['telegram_bot_token'] ?? ''),
+                    'telegram_chat_id' => trim($_POST['telegram_chat_id'] ?? ''),
                 ];
 
                 Setting::setMany($settingsData);
-                set_flash('success', 'Store delivery, business, and WhatsApp popup settings successfully saved.');
+                set_flash('success', 'Store delivery, business, and notification settings successfully saved.');
                 header('Location: /admin/settings');
                 exit;
             }
             header('Location: /admin/settings');
+            break;
+
+        case '/admin/settings/telegram/test':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                $token = trim($_POST['token'] ?? '');
+                $chatId = trim($_POST['chat_id'] ?? '');
+                $res = TelegramService::sendTestMessage($token, $chatId);
+                json_response($res);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
         case '/admin/reports':

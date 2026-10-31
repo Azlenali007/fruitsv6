@@ -324,6 +324,113 @@ $settings = Setting::getAll();
             </div>
         </div>
 
+        <!-- Telegram Order Notifications Card (Decoupled & Background-Ready) -->
+        <div class="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-5" x-data="{
+            testing: false,
+            testMsg: '',
+            testSuccess: false,
+            runTest() {
+                const token = document.getElementById('tg_bot_token').value;
+                const chatId = document.getElementById('tg_chat_id').value;
+                if (!token || !chatId) {
+                    alert('Please enter both Bot Token and Chat ID to run a test.');
+                    return;
+                }
+                this.testing = true;
+                this.testMsg = '';
+                const fd = new FormData();
+                fd.append('token', token);
+                fd.append('chat_id', chatId);
+                fetch('/admin/settings/telegram/test', {
+                    method: 'POST',
+                    body: fd
+                })
+                .then(r => r.json())
+                .then(d => {
+                    this.testing = false;
+                    this.testSuccess = d.success;
+                    this.testMsg = d.success ? '✓ Test notification sent successfully to your Telegram chat!' : ('✗ Failed: ' + (d.error || 'Connection error'));
+                })
+                .catch(err => {
+                    this.testing = false;
+                    this.testSuccess = false;
+                    this.testMsg = '✗ Network error testing Telegram connection.';
+                });
+            }
+        }">
+            <div class="flex items-center justify-between border-b border-gray-100 pb-3">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold text-sm">
+                        ✈️
+                    </div>
+                    <div>
+                        <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Telegram Order Alerts (Future Integration)</h2>
+                        <p class="text-[11px] text-gray-400">Non-blocking background notifications dispatched asynchronously after order commit</p>
+                    </div>
+                </div>
+                <span class="text-[10px] font-bold px-2.5 py-0.5 rounded-full <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600' ?>">
+                    <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'Enabled' : 'Disabled' ?>
+                </span>
+            </div>
+
+            <div class="space-y-4 text-xs">
+                <label class="flex items-start gap-3 p-3.5 bg-sky-50/50 border border-sky-100 rounded-2xl cursor-pointer">
+                    <input 
+                        type="checkbox" 
+                        name="telegram_notifications_enabled" 
+                        value="1" 
+                        <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'checked' : '' ?>
+                        class="w-4 h-4 text-sky-600 rounded-sm focus:ring-sky-500 mt-0.5"
+                    >
+                    <div>
+                        <span class="font-bold text-gray-900 block">Enable Instant Telegram Alerts</span>
+                        <span class="text-[11px] text-gray-500">Automatically enqueue Telegram messages when new Cash on Delivery orders are placed or online payments are captured.</span>
+                    </div>
+                </label>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Telegram Bot Token</label>
+                        <input 
+                            type="password" 
+                            id="tg_bot_token"
+                            name="telegram_bot_token" 
+                            value="<?= e($settings['telegram_bot_token'] ?? '') ?>" 
+                            placeholder="e.g. 123456789:ABCDefghIJKLmnOPQRstuvWXyz"
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                        >
+                        <span class="text-[10px] text-gray-400 mt-1 block">Created via @BotFather. Securely stored on server.</span>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Target Chat / Channel ID</label>
+                        <input 
+                            type="text" 
+                            id="tg_chat_id"
+                            name="telegram_chat_id" 
+                            value="<?= e($settings['telegram_chat_id'] ?? '') ?>" 
+                            placeholder="e.g. -100123456789 or 98765432"
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                        >
+                        <span class="text-[10px] text-gray-400 mt-1 block">Chat or group ID where order notifications should be delivered.</span>
+                    </div>
+                </div>
+
+                <div class="pt-2 flex items-center justify-between">
+                    <button 
+                        type="button" 
+                        @click="runTest()"
+                        :disabled="testing"
+                        class="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-bold px-4 py-2 rounded-xl transition flex items-center gap-1.5 text-xs shadow-2xs disabled:opacity-50"
+                    >
+                        <span x-show="!testing">⚡ Test Bot Notification</span>
+                        <span x-show="testing">Connecting...</span>
+                    </button>
+                    <span x-show="testMsg" x-text="testMsg" class="font-bold text-xs" :class="testSuccess ? 'text-emerald-700' : 'text-red-600'"></span>
+                </div>
+            </div>
+        </div>
+
         <div class="flex justify-end">
             <button type="submit" class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-3 px-6 rounded-xl shadow-xs transition">
                 Save All Settings

@@ -51,7 +51,7 @@ if (!$testCust) {
         'phone' => $testCustomerPhone,
         'password' => 'password123'
     ]);
-    $testCust = Customer::findById((int)$cRes['id']);
+    $testCust = Customer::findById(is_array($cRes) ? (int)$cRes['id'] : (int)$cRes);
 }
 $_SESSION[CustomerAuthService::SESSION_CUSTOMER_ID] = (int)$testCust['id'];
 $_SESSION[CustomerAuthService::SESSION_CUSTOMER_PHONE] = $testCustomerPhone;
