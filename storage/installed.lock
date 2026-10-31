@@ -1,6 +1,6 @@
 {
-    "installed_at": "2026-10-30 22:15:09",
+    "installed_at": "2026-10-31 15:00:49",
     "version": "1.0.0",
-    "status": "auto_recovered",
+    "source": "setup.php",
     "verified": true
 }

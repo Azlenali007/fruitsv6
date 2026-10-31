@@ -22,6 +22,7 @@ $customer = CustomerAuthService::user();
 $subtotal = (float)$cartData['subtotal'];
 $deliveryEnabled = Setting::get('local_delivery_enabled', '1') === '1';
 $baseDeliveryCharge = (float)Setting::get('delivery_charge', '40.00');
+$freeDeliveryAbove = (float)Setting::get('free_delivery_above', '500.00');
 
 $totals = CartService::calculateCheckoutTotals('delivery', (int)$customer['id'], $customer['phone'] ?? '');
 $appliedCoupon = $totals['coupon'];
@@ -58,10 +59,10 @@ $idempotencyKey = bin2hex(random_bytes(16));
     isProcessing: false,
     processingMessage: 'Processing your order...',
     
-    // Customer Details
-    customerName: '<?= e($savedName) ?>',
-    customerPhone: '<?= e($savedPhone) ?>',
-    customerAddress: '<?= e($savedAddress) ?>',
+    // Customer Details (Safely JSON encoded to avoid syntax errors with newlines or quotes)
+    customerName: <?= json_encode((string)$savedName, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
+    customerPhone: <?= json_encode((string)$savedPhone, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
+    customerAddress: <?= json_encode((string)$savedAddress, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
     customerLandmark: '',
     
     // Delivery Locality / Area State
@@ -76,13 +77,14 @@ $idempotencyKey = bin2hex(random_bytes(16));
     // Pricing
     subtotal: <?= (float)$subtotal ?>,
     defaultDeliveryFee: <?= (float)$baseDeliveryCharge ?>,
+    freeDeliveryAbove: <?= (float)$freeDeliveryAbove ?>,
     discountAmount: <?= (float)$discountAmount ?>,
     deliveryDiscount: <?= (float)$deliveryDiscount ?>,
-    couponType: '<?= e($appliedCoupon['type'] ?? '') ?>',
-    couponCode: '<?= e($appliedCoupon['code'] ?? '') ?>',
+    couponType: <?= json_encode((string)($appliedCoupon['type'] ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
+    couponCode: <?= json_encode((string)($appliedCoupon['code'] ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
     
     get effectiveDeliveryFee() {
-        if (this.subtotal >= 500) return 0;
+        if (this.subtotal >= this.freeDeliveryAbove) return 0;
         return Math.max(0, this.defaultDeliveryFee - this.deliveryDiscount);
     },
     get total() {
@@ -146,7 +148,32 @@ $idempotencyKey = bin2hex(random_bytes(16));
         }
 
         if (!this.paymentMethod) {
-            alert('Please select a payment method.');
+            alert('Please select a payment method (Cash on Delivery or Razorpay Online).');
+            event.preventDefault();
+            return;
+        }
+
+        // Validate Full Name
+        if (!this.customerName || this.customerName.trim().length < 2) {
+            alert('Please enter your full name for the order.');
+            this.editAddress = true;
+            event.preventDefault();
+            return;
+        }
+
+        // Validate 10-Digit Mobile Phone
+        const cleanPhone = (this.customerPhone || '').replace(/[^0-9]/g, '');
+        if (cleanPhone.length < 10) {
+            alert('Please enter a valid 10-digit mobile number for delivery updates.');
+            this.editAddress = true;
+            event.preventDefault();
+            return;
+        }
+
+        // Validate Delivery Address
+        if (!this.customerAddress || this.customerAddress.trim().length < 8) {
+            alert('Please enter your complete delivery address (street, house number, area in Jaora).');
+            this.editAddress = true;
             event.preventDefault();
             return;
         }
@@ -157,8 +184,29 @@ $idempotencyKey = bin2hex(random_bytes(16));
             ? 'Connecting to Razorpay secure checkout...' 
             : 'Placing your Cash on Delivery order...';
 
-        const form = event.target;
+        const form = event.target.closest('form') || event.target;
         const formData = new FormData(form);
+
+        // Explicitly guarantee all validated values are attached to FormData
+        formData.set('customer_name', this.customerName.trim());
+        formData.set('customer_phone', this.customerPhone.trim());
+        formData.set('delivery_address', this.customerAddress.trim());
+        if (this.customerLandmark) {
+            formData.set('landmark', this.customerLandmark.trim());
+        }
+        formData.set('payment_method', this.paymentMethod);
+        if (this.selectedAreaId) {
+            formData.set('delivery_area_id', this.selectedAreaId);
+        }
+        if (this.deliveryAreaName) {
+            formData.set('delivery_area_name', this.deliveryAreaName);
+        }
+        if (this.latitude) {
+            formData.set('latitude', this.latitude);
+        }
+        if (this.longitude) {
+            formData.set('longitude', this.longitude);
+        }
 
         fetch('/checkout/place', {
             method: 'POST',
@@ -377,14 +425,12 @@ $idempotencyKey = bin2hex(random_bytes(16));
                     </div>
                 </div>
 
-                <!-- Hidden inputs to submit current values if not editing -->
-                <template x-if="!editAddress">
-                    <div>
-                        <input type="hidden" name="customer_name" :value="customerName">
-                        <input type="hidden" name="customer_phone" :value="customerPhone">
-                        <input type="hidden" name="delivery_address" :value="customerAddress">
-                    </div>
-                </template>
+                <!-- Hidden inputs to guarantee values are submitted if not editing -->
+                <div x-show="!editAddress">
+                    <input type="hidden" name="customer_name" :value="customerName" value="<?= e($savedName) ?>">
+                    <input type="hidden" name="customer_phone" :value="customerPhone" value="<?= e($savedPhone) ?>">
+                    <input type="hidden" name="delivery_address" :value="customerAddress" value="<?= e($savedAddress) ?>">
+                </div>
 
                 <!-- LOCALITY & DELIVERY AREA SELECTION -->
                 <div class="pt-2.5 border-t border-gray-100 space-y-2.5">
@@ -501,46 +547,56 @@ $idempotencyKey = bin2hex(random_bytes(16));
                     
                     <!-- Option 1: Cash on Delivery (Completely hidden when Admin turns COD OFF) -->
                     <?php if ($codEnabled): ?>
-                    <label 
-                        class="flex items-center justify-between p-3.5 rounded-2xl border transition cursor-pointer"
-                        :class="paymentMethod === 'cod' ? 'bg-white border-brand-600 ring-1 ring-brand-600 shadow-xs' : 'bg-white border-gray-200 hover:border-gray-300'"
+                    <div 
+                        role="button"
+                        tabindex="0"
+                        @click="paymentMethod = 'cod'"
+                        @keydown.space.prevent="paymentMethod = 'cod'"
+                        @keydown.enter.prevent="paymentMethod = 'cod'"
+                        class="flex items-center justify-between p-3.5 rounded-2xl border transition cursor-pointer select-none"
+                        :class="paymentMethod === 'cod' ? 'bg-emerald-50/50 border-brand-600 ring-2 ring-brand-600 shadow-xs' : 'bg-white border-gray-200 hover:border-gray-300'"
                     >
                         <div class="flex items-center gap-3">
-                            <div class="w-5 h-5 rounded-full flex items-center justify-center border"
-                                 :class="paymentMethod === 'cod' ? 'bg-brand-600 border-brand-600 text-white' : 'border-gray-300'">
+                            <div class="w-5 h-5 rounded-full flex items-center justify-center border transition"
+                                 :class="paymentMethod === 'cod' ? 'bg-brand-600 border-brand-600 text-white' : 'border-gray-300 bg-white'">
                                 <svg x-show="paymentMethod === 'cod'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
                                 </svg>
                             </div>
                             <div class="flex items-center gap-2.5">
-                                <div class="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                                <div class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 text-sm">
                                     💵
                                 </div>
                                 <div>
                                     <p class="font-bold text-xs sm:text-sm text-gray-900 leading-none">Cash on Delivery</p>
-                                    <p class="text-[11px] text-gray-400 mt-1">Pay when your fresh tender coconuts arrive</p>
+                                    <p class="text-[11px] text-gray-500 mt-1">Pay when your fresh tender coconuts arrive</p>
                                 </div>
                             </div>
                         </div>
-                        <input type="radio" name="payment_method" value="cod" x-model="paymentMethod" class="sr-only">
-                    </label>
+                        <input type="radio" name="payment_method_radio" value="cod" :checked="paymentMethod === 'cod'" @change="paymentMethod = 'cod'" class="sr-only">
+                    </div>
                     <?php endif; ?>
 
                     <!-- Option 2: Razorpay Online Payment -->
                     <?php if ($razorpayEnabled): ?>
-                    <label 
-                        class="flex items-center justify-between p-3.5 rounded-2xl border transition cursor-pointer"
-                        :class="paymentMethod === 'online' ? 'bg-white border-brand-600 ring-1 ring-brand-600 shadow-xs' : 'bg-white border-gray-200 hover:border-gray-300'"
+                    <div 
+                        role="button"
+                        tabindex="0"
+                        @click="paymentMethod = 'online'"
+                        @keydown.space.prevent="paymentMethod = 'online'"
+                        @keydown.enter.prevent="paymentMethod = 'online'"
+                        class="flex items-center justify-between p-3.5 rounded-2xl border transition cursor-pointer select-none"
+                        :class="paymentMethod === 'online' ? 'bg-emerald-50/50 border-brand-600 ring-2 ring-brand-600 shadow-xs' : 'bg-white border-gray-200 hover:border-gray-300'"
                     >
                         <div class="flex items-center gap-3">
-                            <div class="w-5 h-5 rounded-full flex items-center justify-center border"
-                                 :class="paymentMethod === 'online' ? 'bg-brand-600 border-brand-600 text-white' : 'border-gray-300'">
+                            <div class="w-5 h-5 rounded-full flex items-center justify-center border transition"
+                                 :class="paymentMethod === 'online' ? 'bg-brand-600 border-brand-600 text-white' : 'border-gray-300 bg-white'">
                                 <svg x-show="paymentMethod === 'online'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
                                 </svg>
                             </div>
                             <div class="flex items-center gap-2.5">
-                                <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                                <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 text-sm">
                                     💳
                                 </div>
                                 <div>
@@ -548,13 +604,16 @@ $idempotencyKey = bin2hex(random_bytes(16));
                                         <p class="font-bold text-xs sm:text-sm text-gray-900 leading-none">Online Payment (Razorpay)</p>
                                         <span class="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">Instant</span>
                                     </div>
-                                    <p class="text-[11px] text-gray-400 mt-1">UPI (GPay / PhonePe / Paytm), Cards, NetBanking</p>
+                                    <p class="text-[11px] text-gray-500 mt-1">UPI (GPay / PhonePe / Paytm), Cards, NetBanking</p>
                                 </div>
                             </div>
                         </div>
-                        <input type="radio" name="payment_method" value="online" x-model="paymentMethod" class="sr-only">
-                    </label>
+                        <input type="radio" name="payment_method_radio" value="online" :checked="paymentMethod === 'online'" @change="paymentMethod = 'online'" class="sr-only">
+                    </div>
                     <?php endif; ?>
+
+                    <!-- Hidden input to guarantee payment_method is always present in FormData -->
+                    <input type="hidden" name="payment_method" :value="paymentMethod" value="<?= e($defaultPaymentMethod) ?>">
 
                 </div>
             <?php endif; ?>
@@ -573,19 +632,17 @@ $idempotencyKey = bin2hex(random_bytes(16));
                 <span>-₹<span x-text="discountAmount.toFixed(2)"></span></span>
             </div>
 
-            <!-- Delivery Row -->
-            <div class="flex justify-between items-center">
+            <!-- Delivery Row (Always rendered server-side and live reactive) -->
+            <div class="flex justify-between items-center text-xs text-gray-600">
                 <span>Delivery Charge:</span>
-                <div>
-                    <template x-if="deliveryDiscount > 0 || subtotal >= 500">
-                        <span class="space-x-1">
-                            <span class="line-through text-gray-400">₹<span x-text="defaultDeliveryFee.toFixed(2)"></span></span>
-                            <span class="font-bold text-emerald-700">FREE</span>
-                        </span>
-                    </template>
-                    <template x-if="deliveryDiscount <= 0 && subtotal < 500">
-                        <span class="font-bold text-gray-900">₹<span x-text="effectiveDeliveryFee.toFixed(2)"></span></span>
-                    </template>
+                <div class="font-bold">
+                    <span x-show="effectiveDeliveryFee <= 0" class="text-emerald-700 font-bold" <?= $effectiveDelivery <= 0 ? '' : 'style="display:none"' ?>>
+                        <span x-show="defaultDeliveryFee > 0" class="line-through text-gray-400 font-normal mr-1">₹<span x-text="defaultDeliveryFee.toFixed(2)"><?= number_format($baseDeliveryCharge, 2) ?></span></span>
+                        <span>FREE</span>
+                    </span>
+                    <span x-show="effectiveDeliveryFee > 0" class="text-gray-900 font-bold" <?= $effectiveDelivery > 0 ? '' : 'style="display:none"' ?>>
+                        ₹<span x-text="effectiveDeliveryFee.toFixed(2)"><?= number_format($effectiveDelivery, 2) ?></span>
+                    </span>
                 </div>
             </div>
 
@@ -597,7 +654,9 @@ $idempotencyKey = bin2hex(random_bytes(16));
                     <span class="text-[10px] text-emerald-600 font-bold block">Saved ₹<?= number_format($totals['total_savings'], 2) ?> with coupon</span>
                     <?php endif; ?>
                 </div>
-                <span class="text-brand-700 text-lg font-black" x-text="'₹' + total"></span>
+                <span class="text-brand-700 text-lg font-black">
+                    ₹<span x-text="total"><?= number_format($totals['total'], 2) ?></span>
+                </span>
             </div>
         </div>
 
@@ -606,10 +665,12 @@ $idempotencyKey = bin2hex(random_bytes(16));
             <button 
                 type="submit" 
                 :disabled="isProcessing || !deliveryAvailable || (!codEnabled && !razorpayEnabled)"
-                class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-base py-3.5 px-6 rounded-xl flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
+                class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-base py-3.5 px-6 rounded-xl flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-                <svg x-show="isProcessing" class="animate-spin w-5 h-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-                <span x-text="!deliveryAvailable ? 'Delivery Not Available At Your Location' : (isProcessing ? processingMessage : (paymentMethod === 'online' ? 'Proceed to Razorpay Payment' : 'Place Order'))"></span>
+                <svg x-show="isProcessing" class="animate-spin w-5 h-5 text-white shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                <span x-text="!deliveryAvailable ? 'Delivery Not Available At Your Location' : (isProcessing ? processingMessage : (paymentMethod === 'online' ? 'Proceed to Razorpay Payment' : 'Place Order'))">
+                    <?= $defaultPaymentMethod === 'online' ? 'Proceed to Razorpay Payment' : 'Place Order' ?>
+                </span>
             </button>
         </div>
 

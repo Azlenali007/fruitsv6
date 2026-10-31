@@ -1238,6 +1238,59 @@ try {
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
+        // ------------------------------------------------
+        // Live Traffic & Visitor Analytics Routes
+        // ------------------------------------------------
+        case '/admin/analytics':
+            AuthService::requireAdmin();
+            $rangePreset = $_GET['range'] ?? 'today';
+            $customFrom = $_GET['from'] ?? null;
+            $customTo = $_GET['to'] ?? null;
+            $dateRange = AnalyticsService::resolveDateRange($rangePreset, $customFrom, $customTo);
+            $metrics = AnalyticsService::getDashboardMetrics($dateRange);
+            $liveCount = AnalyticsService::getActiveVisitorCount();
+            $liveVisitors = AnalyticsService::getActiveVisitors(15);
+            require __DIR__ . '/../app/views/admin/analytics.php';
+            break;
+
+        case '/api/analytics/track':
+            if ($method === 'POST') {
+                $rawInput = file_get_contents('php://input');
+                $jsonData = json_decode($rawInput, true) ?: [];
+                $payload = !empty($jsonData) ? $jsonData : $_POST;
+                $res = AnalyticsService::recordHit($payload);
+                json_response($res);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/analytics/heartbeat':
+            if ($method === 'POST') {
+                $rawInput = file_get_contents('php://input');
+                $jsonData = json_decode($rawInput, true) ?: [];
+                $sessionToken = $jsonData['session_token'] ?? ($_POST['session_token'] ?? '');
+                $path = $jsonData['path'] ?? ($_POST['path'] ?? '/');
+                if (!empty($sessionToken)) {
+                    AnalyticsService::recordHeartbeat($sessionToken, $path);
+                    json_response(['success' => true]);
+                }
+                json_response(['success' => false, 'error' => 'Missing session token'], 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/analytics/live':
+            AuthService::requireAdmin();
+            $count = AnalyticsService::getActiveVisitorCount();
+            $visitors = AnalyticsService::getActiveVisitors(15);
+            json_response([
+                'success' => true,
+                'live_count' => $count,
+                'visitors' => $visitors,
+                'timestamp' => date('h:i:s A')
+            ]);
+            break;
+
         // Proper 404 handler for missing routes
         default:
             http_response_code(404);

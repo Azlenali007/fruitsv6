@@ -36,6 +36,35 @@ class OrderService {
             ];
         }
 
+        // 2.5 Early Idempotency Check (Prevent duplicate clicks and duplicate orders)
+        $idempotencyKey = !empty($postData['idempotency_key']) ? trim((string)$postData['idempotency_key']) : null;
+        if ($idempotencyKey !== null && $idempotencyKey !== '') {
+            $pdo = Database::getConnection();
+            $stmtCheck = $pdo->prepare("SELECT * FROM `orders` WHERE `idempotency_key` = ?");
+            $stmtCheck->execute([$idempotencyKey]);
+            $existing = $stmtCheck->fetch();
+            if ($existing) {
+                $isOnline = ($existing['payment_method'] === 'online');
+                $totalAmt = (float)$existing['total_amount'];
+                $amtPaise = (int)round($totalAmt * 100);
+                return [
+                    'success' => true,
+                    'is_duplicate' => true,
+                    'requires_razorpay' => ($isOnline && $existing['payment_status'] !== 'captured'),
+                    'order_id' => (int)$existing['id'],
+                    'order_number' => $existing['order_number'],
+                    'tracking_hash' => $existing['tracking_hash'],
+                    'total_amount' => $totalAmt,
+                    'order_total' => $totalAmt,
+                    'amount' => $amtPaise,
+                    'amount_paise' => $amtPaise,
+                    'amount_rupees' => $totalAmt,
+                    'razorpay_order_id' => $existing['razorpay_order_id'] ?? null,
+                    'razorpay_key_id' => RazorpayService::getKeyId()
+                ];
+            }
+        }
+
         // 3. Payment Method Availability Validation
         $codEnabled = RazorpayService::isCodEnabled();
         $rzpEnabled = RazorpayService::isRazorpayEnabled();
@@ -68,15 +97,17 @@ class OrderService {
             ];
         }
 
-        // 4. Customer Info: prefill/confirm with authenticated account
-        $name = trim($postData['customer_name'] ?? '');
-        if (empty($name)) {
-            $name = $customer['name'];
+        // 4. Customer Info: validate submitted name and phone explicitly
+        if (array_key_exists('customer_name', $postData)) {
+            $name = trim((string)$postData['customer_name']);
+        } else {
+            $name = trim($customer['name'] ?? '');
         }
 
-        $phone = trim($postData['customer_phone'] ?? '');
-        if (empty($phone)) {
-            $phone = $customer['phone'];
+        if (array_key_exists('customer_phone', $postData)) {
+            $phone = trim((string)$postData['customer_phone']);
+        } else {
+            $phone = trim($customer['phone'] ?? '');
         }
 
         $fulfilment = trim($postData['fulfilment_method'] ?? 'delivery');
@@ -217,6 +248,8 @@ class OrderService {
                 'amount' => $amountPaise,
                 'amount_paise' => $amountPaise,
                 'amount_rupees' => $totalAmount,
+                'total_amount' => $totalAmount,
+                'order_total' => $totalAmount,
                 'currency' => 'INR',
                 'customer_name' => $name,
                 'customer_phone' => '+91 ' . $cleanPhone,
@@ -243,7 +276,11 @@ class OrderService {
             'order_id' => $orderId,
             'order_number' => $orderNumber,
             'tracking_hash' => $trackingHash,
-            'total_amount' => $totalAmount
+            'total_amount' => $totalAmount,
+            'order_total' => $totalAmount,
+            'amount' => (int)round($totalAmount * 100),
+            'amount_paise' => (int)round($totalAmount * 100),
+            'amount_rupees' => $totalAmount
         ];
     }
 }

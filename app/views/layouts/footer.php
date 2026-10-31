@@ -144,5 +144,69 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
 <!-- WhatsApp Channel Modal Popup -->
 <?php require_once __DIR__ . '/../components/whatsapp-popup.php'; ?>
 
+<!-- First-Party Privacy-Preserving Traffic Telemetry -->
+<script>
+(function() {
+    try {
+        const path = window.location.pathname;
+        if (path.startsWith('/admin') || path.startsWith('/api')) return;
+
+        // 1. Resolve Persistent Visitor ID
+        let vid = localStorage.getItem('na_vid');
+        if (!vid) {
+            vid = 'vid_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+            localStorage.setItem('na_vid', vid);
+        }
+
+        // 2. Resolve Active Session Token
+        let sid = sessionStorage.getItem('na_sid');
+        const searchParams = new URLSearchParams(window.location.search);
+        const queryObj = {};
+        for (const [k, v] of searchParams.entries()) {
+            if (['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'ref', 'source', 'gclid', 'fbclid', 'qr'].includes(k.toLowerCase())) {
+                queryObj[k] = v;
+            }
+        }
+
+        // 3. Dispatch Page Hit Telemetry (Non-blocking)
+        const hitData = {
+            visitor_id: vid,
+            session_token: sid || '',
+            path: path,
+            title: document.title || '',
+            referrer: document.referrer || '',
+            query: queryObj
+        };
+
+        fetch('/api/analytics/track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(hitData),
+            keepalive: true
+        })
+        .then(r => r.json())
+        .then(d => {
+            if (d && d.session_token) {
+                sessionStorage.setItem('na_sid', d.session_token);
+                sid = d.session_token;
+            }
+        })
+        .catch(() => {});
+
+        // 4. Heartbeat while page is open (every 30s)
+        setInterval(function() {
+            if (document.visibilityState === 'visible' && sid) {
+                fetch('/api/analytics/heartbeat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_token: sid, path: window.location.pathname }),
+                    keepalive: true
+                }).catch(() => {});
+            }
+        }, 30000);
+    } catch (e) {}
+})();
+</script>
+
 </body>
 </html>

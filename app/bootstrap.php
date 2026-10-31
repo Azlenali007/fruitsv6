@@ -84,5 +84,6 @@ require_once __DIR__ . '/services/RazorpayService.php';
 require_once __DIR__ . '/services/InvoiceService.php';
 require_once __DIR__ . '/services/BackgroundTaskService.php';
 require_once __DIR__ . '/services/TelegramService.php';
+require_once __DIR__ . '/services/AnalyticsService.php';
 
 
