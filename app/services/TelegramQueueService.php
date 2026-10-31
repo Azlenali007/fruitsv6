@@ -158,17 +158,17 @@ class TelegramQueueService {
         $botToken = TelegramService::getBotToken();
         $chatId = TelegramService::getChatId();
 
-        if (empty($botToken) || empty($chatId)) {
+        if (empty($botToken) || empty($chatId) || TelegramService::isPlaceholderToken($botToken)) {
             $stmtDelay = $pdo->prepare("
                 UPDATE `telegram_notification_queue`
                 SET `status` = 'pending',
                     `locked_at` = NULL,
-                    `next_attempt_at` = DATE_ADD(NOW(), INTERVAL 2 MINUTE),
+                    `next_attempt_at` = DATE_ADD(NOW(), INTERVAL 5 MINUTE),
                     `last_error` = 'Telegram Bot Token or Chat ID not configured in admin settings'
                 WHERE `id` = ?
             ");
             $stmtDelay->execute([$jobId]);
-            return ['success' => false, 'skipped' => true, 'error' => 'Bot Token or Chat ID missing'];
+            return ['success' => false, 'skipped' => true, 'error' => 'Bot Token or Chat ID missing or placeholder'];
         }
 
         // 2. Fetch Order Data
@@ -240,6 +240,20 @@ class TelegramQueueService {
 
         // 5. Telegram delivery failed -> Handle Retry / Exponential Backoff
         $errorMsg = $result['error'] ?? 'Unknown Telegram delivery failure';
+
+        // Bad credentials cannot succeed on retry - fail immediately and alert admin
+        if (!empty($result['http_code']) && ($result['http_code'] === 401 || $result['http_code'] === 404)) {
+            $stmtMaxFail = $pdo->prepare("
+                UPDATE `telegram_notification_queue`
+                SET `status` = 'failed',
+                    `attempts` = ?,
+                    `locked_at` = NULL,
+                    `last_error` = ?
+                WHERE `id` = ?
+            ");
+            $stmtMaxFail->execute([$attempts, $errorMsg, $jobId]);
+            return ['success' => false, 'failed_permanently' => true, 'error' => $errorMsg];
+        }
 
         if ($attempts >= $maxAttempts) {
             // Reached max attempts - mark as permanently failed
@@ -385,7 +399,37 @@ class TelegramQueueService {
     }
 
     /**
-     * Get queue telemetry and worker health statistics for admin monitor.
+     * Record server-side Cron execution heartbeat and execution metrics.
+     *
+     * @param array $summary Batch execution summary
+     */
+    public static function recordCronExecution(array $summary = []): void {
+        try {
+            $now = date('Y-m-d H:i:s');
+            Setting::set('telegram_cron_last_execution_at', $now);
+            Setting::set('telegram_cron_last_status', 'active');
+            
+            $claimed = $summary['claimed'] ?? 0;
+            $sent = $summary['sent'] ?? 0;
+            $failed = $summary['failed'] ?? 0;
+            $retrying = $summary['retrying'] ?? 0;
+            $skipped = $summary['skipped'] ?? 0;
+            $summaryText = "{$claimed} processed ({$sent} delivered, {$retrying} scheduled, {$failed} failed, {$skipped} skipped)";
+            Setting::set('telegram_cron_last_summary', $summaryText);
+
+            $runs = (int)Setting::get('telegram_cron_total_runs', '0') + 1;
+            Setting::set('telegram_cron_total_runs', (string)$runs);
+
+            if ($sent > 0) {
+                Setting::set('telegram_last_delivery_at', $now);
+            }
+        } catch (Throwable $e) {
+            error_log("Failed to record Telegram cron execution: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get queue telemetry and cron health statistics for admin monitor.
      *
      * @return array
      */
@@ -398,11 +442,20 @@ class TelegramQueueService {
             'sent' => 0,
             'failed' => 0,
             'total' => 0,
+            'cron_status' => 'inactive',
+            'is_cron_active' => false,
+            'cron_last_execution_at' => '',
+            'seconds_since_cron' => 999999,
+            'cron_summary' => '',
+            'cron_total_runs' => 0,
+            'last_delivery_at' => '',
             'worker_status' => 'stopped',
             'worker_heartbeat' => '',
             'seconds_since_heartbeat' => 999999,
             'is_worker_alive' => false,
             'total_processed_count' => (int)Setting::get('telegram_worker_processed_count', '0'),
+            'php_binary' => (defined('PHP_BINARY') && PHP_BINARY) ? PHP_BINARY : '/usr/bin/php',
+            'project_root' => defined('ROOT_PATH') ? ROOT_PATH : realpath(__DIR__ . '/../../'),
             'recent_jobs' => []
         ];
 
@@ -422,28 +475,51 @@ class TelegramQueueService {
                 $stats['total'] += $count;
             }
 
-            // Worker heartbeat analysis - direct query for zero-staleness real-time telemetry
-            $stmtHb = $pdo->query("SELECT `key_name`, `value` FROM `settings` WHERE `key_name` IN ('telegram_worker_last_heartbeat', 'telegram_worker_status')");
-            $hbMap = $stmtHb->fetchAll(PDO::FETCH_KEY_PAIR);
-            $hb = $hbMap['telegram_worker_last_heartbeat'] ?? '';
-            $wStatus = $hbMap['telegram_worker_status'] ?? 'idle';
-            $stats['worker_heartbeat'] = $hb;
+            // Cron & worker telemetry analysis - direct query for zero-staleness real-time stats
+            $stmtCron = $pdo->query("
+                SELECT `key_name`, `value` FROM `settings` 
+                WHERE `key_name` IN (
+                    'telegram_cron_last_execution_at',
+                    'telegram_cron_last_status',
+                    'telegram_cron_last_summary',
+                    'telegram_cron_total_runs',
+                    'telegram_last_delivery_at',
+                    'telegram_worker_last_heartbeat',
+                    'telegram_worker_status'
+                )
+            ");
+            $meta = $stmtCron->fetchAll(PDO::FETCH_KEY_PAIR);
 
-            if (!empty($hb)) {
-                $hbTime = strtotime($hb);
-                $diff = time() - $hbTime;
-                $stats['seconds_since_heartbeat'] = max(0, $diff);
+            $cronLast = $meta['telegram_cron_last_execution_at'] ?? '';
+            $stats['cron_last_execution_at'] = $cronLast;
+            $stats['cron_summary'] = $meta['telegram_cron_last_summary'] ?? '';
+            $stats['cron_total_runs'] = (int)($meta['telegram_cron_total_runs'] ?? 0);
+            $stats['last_delivery_at'] = $meta['telegram_last_delivery_at'] ?? '';
 
-                if ($diff <= 65) {
-                    $stats['worker_status'] = 'running';
-                    $stats['is_worker_alive'] = true;
+            if (!empty($cronLast)) {
+                $diff = time() - strtotime($cronLast);
+                $stats['seconds_since_cron'] = max(0, $diff);
+
+                // Verified Active ONLY if cron has executed within last 75 seconds (for 30s schedule)
+                if ($diff <= 75) {
+                    $stats['cron_status'] = 'active';
+                    $stats['is_cron_active'] = true;
                 } elseif ($diff <= 180) {
-                    $stats['worker_status'] = 'idle';
-                    $stats['is_worker_alive'] = true;
+                    $stats['cron_status'] = 'delayed';
+                    $stats['is_cron_active'] = false;
                 } else {
-                    $stats['worker_status'] = 'stopped';
-                    $stats['is_worker_alive'] = false;
+                    $stats['cron_status'] = 'inactive';
+                    $stats['is_cron_active'] = false;
                 }
+            }
+
+            $workerHeartbeat = $meta['telegram_worker_last_heartbeat'] ?? '';
+            $stats['worker_heartbeat'] = $workerHeartbeat;
+            $stats['worker_status'] = $meta['telegram_worker_status'] ?? 'stopped';
+            if (!empty($workerHeartbeat)) {
+                $diffWorker = time() - strtotime($workerHeartbeat);
+                $stats['seconds_since_heartbeat'] = max(0, $diffWorker);
+                $stats['is_worker_alive'] = ($diffWorker <= 90);
             }
 
             // Recent 5 queue entries

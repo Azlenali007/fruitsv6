@@ -8,6 +8,28 @@
 class TelegramService {
 
     /**
+     * Optional Mock handler for unit and automated testing
+     * @var callable|null
+     */
+    private static $mockHandler = null;
+
+    public static function setMockHandler(?callable $handler): void {
+        self::$mockHandler = $handler;
+    }
+
+    /**
+     * Check if a token is empty or an obvious test placeholder
+     */
+    public static function isPlaceholderToken(string $token): bool {
+        $clean = strtolower(trim($token));
+        if (empty($clean)) return true;
+        return str_contains($clean, 'dummy') 
+            || str_contains($clean, 'invalid') 
+            || str_contains($clean, 'placeholder') 
+            || str_contains($clean, 'sample');
+    }
+
+    /**
      * Check if Telegram notifications are enabled in store settings or environment
      */
     public static function isEnabled(): bool {
@@ -266,7 +288,16 @@ class TelegramService {
         $cleanChatId = trim($chatId);
 
         if (empty($cleanToken) || empty($cleanChatId)) {
-            return ['success' => false, 'error' => 'Bot Token and Chat ID are required.'];
+            return ['success' => false, 'error' => 'Bot Token and Chat ID are required.', 'http_code' => 400];
+        }
+
+        if (self::$mockHandler !== null) {
+            $handler = self::$mockHandler;
+            return $handler($cleanToken, $cleanChatId, $text, $parseMode);
+        }
+
+        if (self::isPlaceholderToken($cleanToken)) {
+            return ['success' => false, 'error' => 'Telegram Bot Token is not configured (placeholder detected).', 'http_code' => 401];
         }
 
         // Direct valid endpoint without urlencode on the path

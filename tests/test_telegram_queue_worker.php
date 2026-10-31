@@ -28,6 +28,17 @@ echo "========================================================\n";
 
 $pdo = Database::getConnection();
 
+// Snapshot original settings to guarantee 100% clean restoration
+$originalSettings = [
+    'telegram_notifications_enabled' => Setting::get('telegram_notifications_enabled', '0'),
+    'telegram_bot_token' => Setting::get('telegram_bot_token', ''),
+    'telegram_chat_id' => Setting::get('telegram_chat_id', ''),
+    'telegram_send_on_cod' => Setting::get('telegram_send_on_cod', '1'),
+    'telegram_send_on_online_paid' => Setting::get('telegram_send_on_online_paid', '1'),
+    'cod_enabled' => Setting::get('cod_enabled', '1'),
+    'razorpay_enabled' => Setting::get('razorpay_enabled', '0')
+];
+
 // -----------------------------------------------------------------------------
 // SECTION A: DATABASE SCHEMA & MIGRATION VERIFICATION
 // -----------------------------------------------------------------------------
@@ -245,9 +256,12 @@ $processRes1 = TelegramQueueService::processJob($recoveredRow = array_merge($fir
 
 assert_test($processRes1['skipped'] === true, "When Telegram is disabled, job is safely skipped without throwing error");
 
-// Re-enable and test failure backoff
+// Re-enable and test failure backoff using mock handler (simulated 504 gateway timeout)
+TelegramService::setMockHandler(function($token, $chatId, $text) {
+    return ['success' => false, 'error' => 'Gateway connection timeout', 'http_code' => 504];
+});
 Setting::set('telegram_notifications_enabled', '1');
-Setting::set('telegram_bot_token', '123456789:INVALID_DUMMY_TOKEN_FOR_TESTING');
+Setting::set('telegram_bot_token', '987654321:AAEk92384923849_validFormatToken');
 Setting::set('telegram_chat_id', '-100123456789');
 
 // Mock a job with attempts = 1
@@ -260,7 +274,7 @@ $testJobRow = [
 ];
 
 $failRes = TelegramQueueService::processJob($testJobRow);
-assert_test($failRes['success'] === false, "Simulated invalid token failed as expected");
+assert_test($failRes['success'] === false, "Simulated network timeout failed as expected");
 assert_test(isset($failRes['retry_in_seconds']), "Scheduled exponential backoff retry in " . ($failRes['retry_in_seconds'] ?? 0) . "s");
 
 $stmtRetryCheck = $pdo->prepare("SELECT `status`, `attempts`, `next_attempt_at`, `last_error` FROM `telegram_notification_queue` WHERE `id` = ?");
@@ -309,7 +323,8 @@ assert_test(isset($stats['is_worker_alive']), "getQueueStats contains worker hea
 // -----------------------------------------------------------------------------
 // SECTION I: CLI WORKER SCRIPT VERIFICATION (--once)
 // -----------------------------------------------------------------------------
-echo "\nI. CLI WORKER SCRIPT EXECUTION (--once):\n";
+// Disable notifications for clean CLI cycle test without unexpected external network calls
+Setting::set('telegram_notifications_enabled', '0');
 
 $workerCmd = "php " . escapeshellarg(__DIR__ . '/../bin/telegram_worker.php') . " --once --verbose";
 exec($workerCmd, $cmdOutput, $exitCode);
@@ -324,8 +339,34 @@ $updatedStats = TelegramQueueService::getQueueStats();
 assert_test(!empty($updatedStats['worker_heartbeat']), "Worker recorded heartbeat in database: " . $updatedStats['worker_heartbeat']);
 assert_test($updatedStats['seconds_since_heartbeat'] < 10, "Worker heartbeat timestamp is fresh (<10s ago, actual: {$updatedStats['seconds_since_heartbeat']}s)");
 
-// Clean test artifacts
-$pdo->exec("DELETE FROM `telegram_notification_queue` WHERE `order_id` IN ({$testOrderId})");
+// -----------------------------------------------------------------------------
+// SECTION J: SERVER-SIDE CRON SCRIPT VERIFICATION (30-SECOND CRON)
+// -----------------------------------------------------------------------------
+echo "\nJ. SERVER CRON SCRIPT & TELEMETRY VERIFICATION:\n";
+
+$cronCmd = "/usr/bin/php " . escapeshellarg(__DIR__ . '/../bin/cron_telegram_queue.php');
+exec($cronCmd, $cronOutput, $cronExitCode);
+
+assert_test($cronExitCode === 0, "php bin/cron_telegram_queue.php executed with code 0");
+$cronOutputStr = implode("\n", $cronOutput);
+assert_test(str_contains($cronOutputStr, '[Cron 30s] Completed:'), "Cron processor output reports successful batch cycle");
+
+$cronStats = TelegramQueueService::getQueueStats();
+assert_test(!empty($cronStats['cron_last_execution_at']), "Cron recorded execution timestamp in database: " . $cronStats['cron_last_execution_at']);
+assert_test($cronStats['seconds_since_cron'] <= 10, "Cron execution is fresh (<= 10s ago, actual: {$cronStats['seconds_since_cron']}s)");
+assert_test($cronStats['is_cron_active'] === true, "Cron status is verified ACTIVE");
+assert_test(is_executable(__DIR__ . '/../bin/cron_telegram_queue.php'), "bin/cron_telegram_queue.php has executable permissions");
+assert_test(is_executable(__DIR__ . '/../bin/cron_30s.sh'), "bin/cron_30s.sh wrapper has executable permissions");
+
+// Clean test artifacts & restore original settings
+foreach ($originalSettings as $k => $v) {
+    Setting::set($k, (string)$v);
+}
+TelegramService::setMockHandler(null);
+
+$pdo->exec("DELETE FROM `telegram_notification_queue` WHERE `order_id` IN ({$testOrderId}, {$codOrderId}, {$onlineOrderId})");
+$pdo->exec("DELETE FROM `orders` WHERE `id` IN ({$codOrderId}, {$onlineOrderId})");
+$pdo->exec("DELETE FROM `order_items` WHERE `order_id` IN ({$codOrderId}, {$onlineOrderId})");
 
 echo "\n========================================================\n";
 echo "TELEGRAM QUEUE & WORKER SUITE: {$passed} PASSED, {$failed} FAILED\n";

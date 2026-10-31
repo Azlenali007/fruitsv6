@@ -30,42 +30,8 @@ phpProcess.on('exit', (code, signal) => {
   console.log(`[Proxy] PHP process exited with code ${code} and signal ${signal}`);
 });
 
-// Background Telegram Queue Worker (runs 30-second continuous cycle)
-let workerProcess: ChildProcess | null = null;
-let isShuttingDown = false;
-
-function spawnTelegramWorker(): void {
-  if (isShuttingDown) return;
-  console.log('[Worker] Spawning PHP Telegram notification background worker (30s cycle)...');
-  workerProcess = spawn('php', ['bin/telegram_worker.php', '--sleep=30'], {
-    stdio: ['ignore', 'inherit', 'inherit'],
-    cwd: process.cwd(),
-    env: { ...process.env },
-  });
-
-  workerProcess.on('error', (err) => {
-    console.error('[Worker] Failed to spawn Telegram worker process:', err);
-  });
-
-  workerProcess.on('exit', (code, signal) => {
-    console.log(`[Worker] Telegram worker exited with code ${code} and signal ${signal}`);
-    if (!isShuttingDown) {
-      console.log('[Worker] Restarting Telegram worker in 5 seconds...');
-      setTimeout(spawnTelegramWorker, 5000);
-    }
-  });
-}
-
-// Clean up child processes on exit
+// Clean up child process on exit
 const cleanUp = () => {
-  isShuttingDown = true;
-  if (workerProcess && !workerProcess.killed) {
-    try {
-      workerProcess.kill('SIGTERM');
-    } catch {
-      // Ignore cleanup error
-    }
-  }
   if (phpProcess && !phpProcess.killed) {
     try {
       phpProcess.kill('SIGTERM');
@@ -152,7 +118,12 @@ app.use((req, res) => {
 
 async function startServer() {
   await waitForPhpServer();
-  spawnTelegramWorker();
+  // Ensure background Linux cron service is active if installed
+  try {
+    spawn('/usr/sbin/cron', [], { stdio: 'ignore', detached: true }).unref();
+  } catch {
+    // Hosted crontab handles scheduled execution
+  }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Proxy] Express reverse proxy listening on http://0.0.0.0:${PORT}`);
   });

@@ -474,10 +474,11 @@ $settings = Setting::getAll();
             </div>
 
             <?php $queueStats = TelegramQueueService::getQueueStats(); ?>
-            <!-- 30-Second Background Worker & Queue Telemetry Card -->
+            <!-- Server-Side Cron Job & Queue Telemetry Card -->
             <div class="mt-4 pt-4 border-t border-gray-100" x-data="{
                 runningWorker: false,
                 retryingQueue: false,
+                copiedCron: false,
                 workerActionMsg: '',
                 stats: <?= htmlspecialchars(json_encode($queueStats), ENT_QUOTES, 'UTF-8') ?>,
                 refreshStats() {
@@ -492,12 +493,12 @@ $settings = Setting::getAll();
                         .then(r => r.json())
                         .then(d => {
                             this.runningWorker = false;
-                            this.workerActionMsg = d.message || 'Worker finished processing queue.';
+                            this.workerActionMsg = d.message || 'Queue batch processed.';
                             if (d.stats) this.stats = d.stats;
                         })
                         .catch(() => {
                             this.runningWorker = false;
-                            this.workerActionMsg = 'Error communicating with worker.';
+                            this.workerActionMsg = 'Error executing queue processor.';
                         });
                 },
                 retryFailed() {
@@ -514,63 +515,107 @@ $settings = Setting::getAll();
                             this.retryingQueue = false;
                             this.workerActionMsg = 'Error retrying queue items.';
                         });
+                },
+                copyCronCommands() {
+                    const cmd = '* * * * * /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1\n* * * * * sleep 30 && /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1';
+                    if (navigator.clipboard) {
+                        navigator.clipboard.writeText(cmd).then(() => {
+                            this.copiedCron = true;
+                            setTimeout(() => { this.copiedCron = false; }, 2500);
+                        });
+                    }
                 }
             }">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
                     <div class="flex items-center gap-2">
                         <span class="text-xs font-bold text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
                             <span class="relative flex h-2.5 w-2.5">
-                                <span :class="stats.is_worker_alive ? 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75' : ''"></span>
-                                <span :class="stats.is_worker_alive ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500' : 'relative inline-flex rounded-full h-2.5 w-2.5 bg-red-400'"></span>
+                                <span :class="stats.is_cron_active ? 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75' : ''"></span>
+                                <span :class="stats.is_cron_active ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500' : (stats.cron_status === 'delayed' ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500' : 'relative inline-flex rounded-full h-2.5 w-2.5 bg-gray-400')"></span>
                             </span>
-                            <span>30-Second Worker & Queue Monitor</span>
+                            <span>Server-Side Cron Job (30-Second Schedule)</span>
                         </span>
                     </div>
 
                     <div class="flex items-center gap-2 text-[11px]">
-                        <span class="text-gray-500">Worker Status:</span>
-                        <span 
-                            class="font-bold px-2 py-0.5 rounded-full uppercase text-[10px]"
-                            :class="stats.is_worker_alive ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'"
-                            x-text="stats.is_worker_alive ? ('Active (Pulse ' + stats.seconds_since_heartbeat + 's ago)') : 'Inactive / Awaiting Pulse'"
-                        ></span>
+                        <span class="text-gray-500 font-medium">Cron Status:</span>
+                        <template x-if="stats.is_cron_active">
+                            <span class="bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full uppercase text-[10px] inline-flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                                ACTIVE (Verified <span x-text="stats.seconds_since_cron"></span>s ago)
+                            </span>
+                        </template>
+                        <template x-if="!stats.is_cron_active && stats.cron_status === 'delayed'">
+                            <span class="bg-amber-100 text-amber-800 font-bold px-2.5 py-0.5 rounded-full uppercase text-[10px]">
+                                DELAYED (<span x-text="stats.seconds_since_cron"></span>s ago)
+                            </span>
+                        </template>
+                        <template x-if="!stats.is_cron_active && stats.cron_status !== 'delayed'">
+                            <span class="bg-gray-100 text-gray-700 font-bold px-2.5 py-0.5 rounded-full uppercase text-[10px]">
+                                INACTIVE / AWAITING CRON
+                            </span>
+                        </template>
                     </div>
                 </div>
 
-                <!-- Queue metrics grid -->
+                <!-- Cron & Queue metrics grid -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3 text-center">
                     <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-amber-700">Pending</div>
+                        <div class="text-[10px] uppercase font-bold text-amber-700">Pending Queue</div>
                         <div class="text-lg font-black text-amber-900" x-text="stats.pending">0</div>
-                        <div class="text-[9px] text-gray-400">waiting for 30s cycle</div>
+                        <div class="text-[9px] text-gray-400">waiting for 30s cron</div>
                     </div>
                     <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-blue-700">Processing</div>
-                        <div class="text-lg font-black text-blue-900" x-text="stats.processing">0</div>
-                        <div class="text-[9px] text-gray-400">claimed by worker</div>
+                        <div class="text-[10px] uppercase font-bold text-sky-700">Last Cron Execution</div>
+                        <div class="text-sm font-black text-sky-900 truncate" x-text="stats.cron_last_execution_at ? stats.cron_last_execution_at.split(' ')[1] : 'Never'">Never</div>
+                        <div class="text-[9px] text-gray-500" x-text="stats.cron_last_execution_at ? (stats.seconds_since_cron + 's ago (' + stats.cron_total_runs + ' runs)') : 'Awaiting first run'"></div>
                     </div>
                     <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-emerald-700">Delivered</div>
-                        <div class="text-lg font-black text-emerald-900" x-text="stats.sent">0</div>
-                        <div class="text-[9px] text-gray-400">sent to Telegram</div>
+                        <div class="text-[10px] uppercase font-bold text-emerald-700">Last Telegram Delivery</div>
+                        <div class="text-sm font-black text-emerald-900 truncate" x-text="stats.last_delivery_at ? stats.last_delivery_at.split(' ')[1] : 'None yet'">None yet</div>
+                        <div class="text-[9px] text-gray-500" x-text="stats.sent + ' delivered total'">0 delivered total</div>
                     </div>
                     <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-red-700">Failed</div>
+                        <div class="text-[10px] uppercase font-bold text-red-700">Failed / Retrying</div>
                         <div class="text-lg font-black text-red-900" x-text="stats.failed">0</div>
-                        <div class="text-[9px] text-gray-400">after max retries</div>
+                        <div class="text-[9px] text-gray-400" x-text="stats.processing + ' in processing'">0 in processing</div>
                     </div>
+                </div>
+
+                <!-- Hosting Server Crontab Setup Box (cPanel / DirectAdmin / Linux) -->
+                <div class="bg-slate-900 text-slate-100 rounded-2xl p-3.5 mb-3 border border-slate-800 text-xs">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                        <div class="flex items-center gap-1.5 font-bold text-slate-300 text-[11px]">
+                            <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                            <span>Server Crontab Setup (cPanel, DirectAdmin, or Linux Server)</span>
+                        </div>
+                        <button 
+                            type="button" 
+                            @click="copyCronCommands()"
+                            class="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold px-2.5 py-1 rounded-lg text-[10px] transition cursor-pointer flex items-center gap-1"
+                        >
+                            <span x-show="!copiedCron">📋 Copy Cron Commands</span>
+                            <span x-show="copiedCron" class="text-emerald-400">✓ Copied to Clipboard!</span>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mb-2">
+                        Runs non-stop 24/7 in the background without opening the website or Admin Panel. The two scheduled executions per minute achieve exact 30-second processing:
+                    </p>
+                    <pre class="bg-black/50 p-2.5 rounded-xl text-[10px] font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed select-all border border-slate-800">* * * * * /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1
+* * * * * sleep 30 && /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1</pre>
                 </div>
 
                 <!-- Action buttons -->
                 <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <button 
                             type="button" 
                             @click="runWorkerNow()"
                             :disabled="runningWorker"
                             class="bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 text-[11px] disabled:opacity-50 cursor-pointer"
+                            title="Server Cron runs automatically. Use this button only if you want to manually test batch processing."
                         >
-                            <span x-show="!runningWorker">⚡ Process Queue Now</span>
+                            <span x-show="!runningWorker">⚡ Test Queue Processing (Manual Debug Only)</span>
                             <span x-show="runningWorker">Processing batch...</span>
                         </button>
                         <button 
@@ -585,7 +630,7 @@ $settings = Setting::getAll();
                         <button 
                             type="button" 
                             @click="refreshStats()"
-                            class="text-gray-400 hover:text-gray-600 p-1 text-[11px]"
+                            class="text-gray-400 hover:text-gray-600 p-1 text-[11px] cursor-pointer"
                             title="Refresh statistics"
                         >
                             🔄 Refresh

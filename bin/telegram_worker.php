@@ -83,7 +83,15 @@ do {
         $recovered = $summary['recovered'] ?? 0;
 
         if ($claimed > 0 || $recovered > 0 || $verbose) {
-            worker_log("Cycle #{$iteration}: Processed {$claimed} jobs (Sent: {$sent}, Retrying: {$retrying}, Failed: {$failed}, Skipped: {$skipped}, Recovered: {$recovered}) in " . round((microtime(true) - $cycleStart) * 1000, 2) . "ms");
+            $parts = [];
+            if ($sent > 0) $parts[] = "Delivered: {$sent}";
+            if ($skipped > 0) $parts[] = "Deferred: {$skipped}";
+            if ($retrying > 0) $parts[] = "Backoff-Scheduled: {$retrying}";
+            if ($failed > 0) $parts[] = "Permanently-Failed: {$failed}";
+            if ($recovered > 0) $parts[] = "Zombie-Recovered: {$recovered}";
+            if (empty($parts)) $parts[] = "No-Op";
+            $statusStr = implode(', ', $parts);
+            worker_log("Cycle #{$iteration}: {$claimed} jobs ({$statusStr}) in " . round((microtime(true) - $cycleStart) * 1000, 2) . "ms");
         }
 
     } catch (Throwable $e) {

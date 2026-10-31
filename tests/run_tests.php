@@ -28,6 +28,9 @@ echo "========================================================\n\n";
 // 1. DATABASE & INITIAL SEED TESTS
 // ---------------------------------------------------------
 echo "1. DATABASE INTEGRITY TESTS:\n";
+// Ensure product stock is replenished for repeatable test executions
+$pdo->exec("UPDATE `products` SET `stock_quantity` = 250, `is_available` = 1 WHERE `slug` = 'fresh-coconut-water'");
+
 $stmt = $pdo->query("SELECT * FROM `products` WHERE `slug` = 'fresh-coconut-water' LIMIT 1");
 $prod = $stmt->fetch();
 it("Product 'Fresh Coconut Water' exists in MySQL", $prod !== false);
