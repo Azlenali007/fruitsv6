@@ -2,7 +2,7 @@
 /**
  * Checkout View - N.A Fresh Fruits & Coconuts
  * Features real Razorpay payment gateway, COD toggle enforcement,
- * Leaflet map-based delivery location picker, automatic area detection,
+ * automatic area detection, structured Alpine component architecture,
  * and zero shop pickup.
  */
 $pageTitle = 'Checkout - N.A Fresh Fruits & Coconuts';
@@ -44,6 +44,29 @@ $savedName = $customer['name'] ?? ($_SESSION['last_customer_name'] ?? '');
 $savedPhone = $customer['phone'] ?? ($_SESSION['last_customer_phone'] ?? '');
 $savedAddress = !empty($customer['address']) ? $customer['address'] : ($_SESSION['last_customer_address'] ?? '123, Green Park, Near Main Road, Bhopal, Madhya Pradesh - 462016');
 $idempotencyKey = bin2hex(random_bytes(16));
+
+// Prepare structured configuration payload for JavaScript
+$checkoutConfig = [
+    'paymentMethod' => (string)$defaultPaymentMethod,
+    'codEnabled' => (bool)$codEnabled,
+    'razorpayEnabled' => (bool)$razorpayEnabled,
+    'customerName' => (string)$savedName,
+    'customerPhone' => (string)$savedPhone,
+    'customerAddress' => (string)$savedAddress,
+    'customerLandmark' => '',
+    'selectedAreaId' => '',
+    'deliveryAreaName' => '',
+    'deliveryAvailable' => true,
+    'subtotal' => (float)$subtotal,
+    'defaultDeliveryFee' => (float)$baseDeliveryCharge,
+    'freeDeliveryAbove' => (float)$freeDeliveryAbove,
+    'discountAmount' => (float)$discountAmount,
+    'deliveryDiscount' => (float)$deliveryDiscount,
+    'couponType' => (string)($appliedCoupon['type'] ?? ''),
+    'couponCode' => (string)($appliedCoupon['code'] ?? ''),
+    'csrfTokenKey' => CSRF_TOKEN_KEY,
+    'csrfToken' => csrf_token(),
+];
 ?>
 
 <?php if ($razorpayEnabled): ?>
@@ -51,264 +74,323 @@ $idempotencyKey = bin2hex(random_bytes(16));
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <?php endif; ?>
 
-<div class="max-w-md mx-auto px-4 py-4 sm:py-6" x-data="{
-    paymentMethod: '<?= $defaultPaymentMethod ?>',
-    codEnabled: <?= $codEnabled ? 'true' : 'false' ?>,
-    razorpayEnabled: <?= $razorpayEnabled ? 'true' : 'false' ?>,
-    editAddress: false,
-    isProcessing: false,
-    processingMessage: 'Processing your order...',
-    
-    // Customer Details (Safely JSON encoded to avoid syntax errors with newlines or quotes)
-    customerName: <?= json_encode((string)$savedName, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
-    customerPhone: <?= json_encode((string)$savedPhone, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
-    customerAddress: <?= json_encode((string)$savedAddress, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
-    customerLandmark: '',
-    
-    // Delivery Locality / Area State
-    latitude: null,
-    longitude: null,
-    selectedAreaId: '',
-    deliveryAreaName: '',
-    deliveryAvailable: true,
-    locationStatusText: '',
-    checkingLocation: false,
-    
-    // Pricing
-    subtotal: <?= (float)$subtotal ?>,
-    defaultDeliveryFee: <?= (float)$baseDeliveryCharge ?>,
-    freeDeliveryAbove: <?= (float)$freeDeliveryAbove ?>,
-    discountAmount: <?= (float)$discountAmount ?>,
-    deliveryDiscount: <?= (float)$deliveryDiscount ?>,
-    couponType: <?= json_encode((string)($appliedCoupon['type'] ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
-    couponCode: <?= json_encode((string)($appliedCoupon['code'] ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>,
-    
-    get effectiveDeliveryFee() {
-        if (this.subtotal >= this.freeDeliveryAbove) return 0;
-        return Math.max(0, this.defaultDeliveryFee - this.deliveryDiscount);
-    },
-    get total() {
-        const netSubtotal = Math.max(0, this.subtotal - this.discountAmount);
-        return (netSubtotal + this.effectiveDeliveryFee).toFixed(2);
-    },
+<!-- Structured Checkout Data & Alpine Component Registration -->
+<script>
+window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
-    // Check delivery area with server API
-    verifyLocation(areaId) {
-        if (!areaId) {
-            this.deliveryAvailable = true;
-            this.defaultDeliveryFee = <?= (float)$baseDeliveryCharge ?>;
-            this.deliveryAreaName = '';
-            this.locationStatusText = '';
-            return;
-        }
-        this.checkingLocation = true;
-        const formData = new FormData();
-        formData.append('area_id', areaId);
-        
-        fetch('/api/check-delivery-location', {
-            method: 'POST',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            this.checkingLocation = false;
-            if (data.success) {
-                this.deliveryAvailable = data.deliverable;
-                if (data.deliverable) {
-                    this.selectedAreaId = data.area_id || '';
-                    this.deliveryAreaName = data.area_name || '';
-                    if (data.delivery_charge !== undefined) {
-                        this.defaultDeliveryFee = parseFloat(data.delivery_charge);
-                    }
-                    this.locationStatusText = data.message || 'Delivery available in your selected area!';
-                } else {
-                    this.deliveryAreaName = '';
-                    this.locationStatusText = data.message || 'Sorry, delivery is not active in this locality yet.';
-                }
-            }
-        })
-        .catch(err => {
-            this.checkingLocation = false;
-            console.error('Location verify error', err);
-        });
-    },
+(function() {
+    function initCheckoutComponent() {
+        if (!window.Alpine) return;
 
-    handleManualAreaChange(event) {
-        const areaId = event.target.value;
-        this.selectedAreaId = areaId;
-        this.verifyLocation(areaId);
-    },
+        try {
+            Alpine.data('checkoutPage', function(config) {
+                config = config || window.__CHECKOUT_CONFIG__ || {};
+                return {
+                    paymentMethod: config.paymentMethod || 'cod',
+                    codEnabled: Boolean(config.codEnabled),
+                    razorpayEnabled: Boolean(config.razorpayEnabled),
+                    editAddress: false,
+                    isProcessing: false,
+                    processingMessage: 'Processing your order...',
 
-    handleCheckoutSubmit(event) {
-        if (!this.deliveryAvailable) {
-            alert('Sorry, delivery is not available at your current location. Please choose another delivery address or locality in Jaora.');
-            event.preventDefault();
-            return;
-        }
+                    // Customer Details
+                    customerName: config.customerName || '',
+                    customerPhone: config.customerPhone || '',
+                    customerAddress: config.customerAddress || '',
+                    customerLandmark: config.customerLandmark || '',
 
-        if (!this.paymentMethod) {
-            alert('Please select a payment method (Cash on Delivery or Razorpay Online).');
-            event.preventDefault();
-            return;
-        }
+                    // Delivery Area State
+                    latitude: null,
+                    longitude: null,
+                    selectedAreaId: config.selectedAreaId || '',
+                    deliveryAreaName: config.deliveryAreaName || '',
+                    deliveryAvailable: config.deliveryAvailable !== false,
+                    locationStatusText: '',
+                    checkingLocation: false,
 
-        // Validate Full Name
-        if (!this.customerName || this.customerName.trim().length < 2) {
-            alert('Please enter your full name for the order.');
-            this.editAddress = true;
-            event.preventDefault();
-            return;
-        }
+                    // Pricing
+                    subtotal: parseFloat(config.subtotal) || 0,
+                    defaultDeliveryFee: parseFloat(config.defaultDeliveryFee) || 0,
+                    freeDeliveryAbove: parseFloat(config.freeDeliveryAbove) || 500,
+                    discountAmount: parseFloat(config.discountAmount) || 0,
+                    deliveryDiscount: parseFloat(config.deliveryDiscount) || 0,
+                    couponType: config.couponType || '',
+                    couponCode: config.couponCode || '',
 
-        // Validate 10-Digit Mobile Phone
-        const cleanPhone = (this.customerPhone || '').replace(/[^0-9]/g, '');
-        if (cleanPhone.length < 10) {
-            alert('Please enter a valid 10-digit mobile number for delivery updates.');
-            this.editAddress = true;
-            event.preventDefault();
-            return;
-        }
-
-        // Validate Delivery Address
-        if (!this.customerAddress || this.customerAddress.trim().length < 8) {
-            alert('Please enter your complete delivery address (street, house number, area in Jaora).');
-            this.editAddress = true;
-            event.preventDefault();
-            return;
-        }
-
-        event.preventDefault();
-        this.isProcessing = true;
-        this.processingMessage = this.paymentMethod === 'online' 
-            ? 'Connecting to Razorpay secure checkout...' 
-            : 'Placing your Cash on Delivery order...';
-
-        const form = event.target.closest('form') || event.target;
-        const formData = new FormData(form);
-
-        // Explicitly guarantee all validated values are attached to FormData
-        formData.set('customer_name', this.customerName.trim());
-        formData.set('customer_phone', this.customerPhone.trim());
-        formData.set('delivery_address', this.customerAddress.trim());
-        if (this.customerLandmark) {
-            formData.set('landmark', this.customerLandmark.trim());
-        }
-        formData.set('payment_method', this.paymentMethod);
-        if (this.selectedAreaId) {
-            formData.set('delivery_area_id', this.selectedAreaId);
-        }
-        if (this.deliveryAreaName) {
-            formData.set('delivery_area_name', this.deliveryAreaName);
-        }
-        if (this.latitude) {
-            formData.set('latitude', this.latitude);
-        }
-        if (this.longitude) {
-            formData.set('longitude', this.longitude);
-        }
-
-        fetch('/checkout/place', {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json'
-            },
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (!data.success) {
-                this.isProcessing = false;
-                alert(data.error || 'Failed to place order.');
-                if (data.auth_required) {
-                    window.location.href = '/login';
-                }
-                return;
-            }
-
-            // Direct confirmation redirect for COD
-            if (data.redirect_url) {
-                this.processingMessage = 'Order confirmed! Loading your receipt...';
-                window.location.href = data.redirect_url;
-                return;
-            }
-
-            // Razorpay flow for Online
-            if (data.requires_razorpay) {
-                const options = {
-                        key: data.razorpay_key_id,
-                        amount: data.amount,
-                        currency: data.currency || 'INR',
-                        name: 'N.A Fresh Fruits & Coconuts',
-                        description: 'Order #' + data.order_number,
-                        image: '/favicon.ico',
-                        order_id: data.razorpay_order_id,
-                        handler: (response) => {
-                            this.processingMessage = 'Verifying payment with Razorpay...';
-                            const verifyParams = new URLSearchParams({
-                                '<?= CSRF_TOKEN_KEY ?>': '<?= csrf_token() ?>',
-                                'razorpay_payment_id': response.razorpay_payment_id,
-                                'razorpay_order_id': response.razorpay_order_id,
-                                'razorpay_signature': response.razorpay_signature,
-                                'attempt_reference': data.attempt_reference
-                            });
-
-                            fetch('/payment/razorpay/verify', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/x-www-form-urlencoded',
-                                    'X-Requested-With': 'XMLHttpRequest'
-                                },
-                                body: verifyParams
-                            })
-                            .then(vRes => vRes.json())
-                            .then(vData => {
-                                if (vData.success && vData.redirect_url) {
-                                    window.location.href = vData.redirect_url;
-                                } else {
-                                    this.isProcessing = false;
-                                    alert(vData.error || 'Payment verification failed. Please contact store support.');
-                                }
-                            })
-                            .catch(err => {
-                                this.isProcessing = false;
-                                alert('Verification communication error. If money was deducted, your order will automatically be confirmed in a moment.');
-                            });
-                        },
-                        prefill: {
-                            name: data.customer_name || this.customerName,
-                            contact: data.customer_phone || this.customerPhone,
-                            email: data.customer_email || ''
-                        },
-                        theme: {
-                            color: '#235d3a'
-                        },
-                        modal: {
-                            ondismiss: () => {
-                                this.isProcessing = false;
-                            }
+                    // Reactive Pricing Getters
+                    get effectiveDeliveryFee() {
+                        if (this.subtotal > this.freeDeliveryAbove || this.subtotal === this.freeDeliveryAbove) return 0;
+                        if (this.couponType === 'free_delivery') return 0;
+                        return Math.max(0, this.defaultDeliveryFee - this.deliveryDiscount);
+                    },
+                    get total() {
+                        const netSubtotal = Math.max(0, this.subtotal - this.discountAmount);
+                        return (netSubtotal + this.effectiveDeliveryFee).toFixed(2);
+                    },
+                    get isFreeDelivery() {
+                        return this.effectiveDeliveryFee <= 0;
+                    },
+                    get hasDiscount() {
+                        return this.discountAmount > 0;
+                    },
+                    get formattedDiscount() {
+                        return this.discountAmount.toFixed(2);
+                    },
+                    get formattedDeliveryFee() {
+                        return this.effectiveDeliveryFee.toFixed(2);
+                    },
+                    get formattedDefaultDeliveryFee() {
+                        return this.defaultDeliveryFee.toFixed(2);
+                    },
+                    get isDefaultDeliveryFeePositive() {
+                        return this.defaultDeliveryFee > 0;
+                    },
+                    get submitButtonText() {
+                        if (!this.deliveryAvailable) {
+                            return 'Delivery Not Available At Your Location';
                         }
-                    };
+                        if (this.isProcessing) {
+                            return this.processingMessage;
+                        }
+                        if (this.paymentMethod === 'online') {
+                            return 'Proceed to Razorpay Payment';
+                        }
+                        return 'Place Order';
+                    },
 
-                    const rzp = new Razorpay(options);
-                    rzp.on('payment.failed', (failResp) => {
-                        this.isProcessing = false;
-                        const desc = failResp.error ? failResp.error.description : 'Payment was declined or cancelled.';
-                        alert('Payment failed: ' + desc);
-                    });
-                    rzp.open();
-                } else if (data.redirect_url) {
-                    window.location.href = data.redirect_url;
-                }
-            })
-            .catch(err => {
-                this.isProcessing = false;
-                alert('A network error occurred while preparing checkout. Please try again.');
+                    // Verify locality with server API
+                    verifyLocation(areaId) {
+                        if (!areaId) {
+                            this.deliveryAvailable = true;
+                            this.defaultDeliveryFee = parseFloat(config.defaultDeliveryFee) || 0;
+                            this.deliveryAreaName = '';
+                            this.locationStatusText = '';
+                            return;
+                        }
+                        this.checkingLocation = true;
+                        const formData = new FormData();
+                        formData.append('area_id', areaId);
+                        
+                        fetch('/api/check-delivery-location', {
+                            method: 'POST',
+                            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                            body: formData
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            this.checkingLocation = false;
+                            if (data && data.success) {
+                                this.deliveryAvailable = Boolean(data.deliverable);
+                                if (data.deliverable) {
+                                    this.selectedAreaId = String(data.area_id || '');
+                                    this.deliveryAreaName = data.area_name || '';
+                                    if (data.delivery_charge !== undefined && data.delivery_charge !== null) {
+                                        this.defaultDeliveryFee = parseFloat(data.delivery_charge);
+                                    }
+                                    this.locationStatusText = data.message || 'Delivery available in your selected area!';
+                                } else {
+                                    this.deliveryAreaName = '';
+                                    this.locationStatusText = data.message || 'Sorry, delivery is not active in this locality yet.';
+                                }
+                            }
+                        })
+                        .catch(err => {
+                            this.checkingLocation = false;
+                            console.error('Location verify error', err);
+                        });
+                    },
+
+                    handleManualAreaChange(event) {
+                        const areaId = event.target.value;
+                        this.selectedAreaId = areaId;
+                        this.verifyLocation(areaId);
+                    },
+
+                    handleCheckoutSubmit(event) {
+                        if (event) event.preventDefault();
+                        if (this.isProcessing) return false;
+
+                        if (!this.deliveryAvailable) {
+                            alert('Sorry, delivery is not available at your current location. Please choose another delivery address or locality in Jaora.');
+                            return false;
+                        }
+
+                        if (!this.paymentMethod) {
+                            alert('Please select a payment method (Cash on Delivery or Razorpay Online).');
+                            return false;
+                        }
+
+                        // Validate Full Name
+                        const nameVal = (this.customerName || '').trim();
+                        if (nameVal.length < 2) {
+                            alert('Please enter your full name for the order.');
+                            this.editAddress = true;
+                            return false;
+                        }
+
+                        // Validate 10-Digit Mobile Phone
+                        const cleanPhone = (this.customerPhone || '').replace(/[^0-9]/g, '');
+                        if (cleanPhone.length < 10) {
+                            alert('Please enter a valid 10-digit mobile number for delivery updates.');
+                            this.editAddress = true;
+                            return false;
+                        }
+
+                        // Validate Delivery Address
+                        const addrVal = (this.customerAddress || '').trim();
+                        if (addrVal.length < 8) {
+                            alert('Please enter your complete delivery address (street, house number, area in Jaora).');
+                            this.editAddress = true;
+                            return false;
+                        }
+
+                        this.isProcessing = true;
+                        this.processingMessage = (this.paymentMethod === 'online') 
+                            ? 'Connecting to Razorpay secure checkout...' 
+                            : 'Placing your Cash on Delivery order...';
+
+                        const form = document.getElementById('checkoutOrderForm');
+                        const formData = form ? new FormData(form) : new FormData();
+
+                        formData.set('customer_name', nameVal);
+                        formData.set('customer_phone', cleanPhone);
+                        formData.set('delivery_address', addrVal);
+                        if (this.customerLandmark) {
+                            formData.set('landmark', this.customerLandmark.trim());
+                        }
+                        formData.set('payment_method', this.paymentMethod);
+                        if (this.selectedAreaId) {
+                            formData.set('delivery_area_id', this.selectedAreaId);
+                        }
+                        if (this.deliveryAreaName) {
+                            formData.set('delivery_area_name', this.deliveryAreaName);
+                        }
+                        if (this.latitude) {
+                            formData.set('latitude', this.latitude);
+                        }
+                        if (this.longitude) {
+                            formData.set('longitude', this.longitude);
+                        }
+
+                        fetch('/checkout/place', {
+                            method: 'POST',
+                            headers: {
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Accept': 'application/json'
+                            },
+                            body: formData
+                        })
+                        .then(res => res.json().then(data => ({ status: res.status, ok: res.ok, data })))
+                        .then(({ status, ok, data }) => {
+                            if (!ok || !data.success) {
+                                this.isProcessing = false;
+                                alert(data.error || 'Failed to place order. Please try again.');
+                                if (data.auth_required) {
+                                    window.location.href = '/login';
+                                }
+                                return;
+                            }
+
+                            // Direct confirmation redirect for COD
+                            if (data.redirect_url) {
+                                this.processingMessage = 'Order confirmed! Loading your receipt...';
+                                window.location.href = data.redirect_url;
+                                return;
+                            }
+
+                            // Razorpay flow for Online
+                            if (data.requires_razorpay) {
+                                if (typeof Razorpay === 'undefined') {
+                                    this.isProcessing = false;
+                                    alert('Razorpay gateway script could not be loaded. Please check your internet connection or choose Cash on Delivery.');
+                                    return;
+                                }
+
+                                const options = {
+                                    key: data.razorpay_key_id,
+                                    amount: data.amount,
+                                    currency: data.currency || 'INR',
+                                    name: data.store_name || 'N.A Fresh Fruits & Coconuts',
+                                    description: 'Order #' + data.order_number,
+                                    image: '/favicon.ico',
+                                    order_id: data.razorpay_order_id,
+                                    handler: (response) => {
+                                        this.processingMessage = 'Verifying payment with Razorpay...';
+                                        const verifyParams = new URLSearchParams();
+                                        verifyParams.append(window.__CHECKOUT_CONFIG__.csrfTokenKey, window.__CHECKOUT_CONFIG__.csrfToken);
+                                        verifyParams.append('razorpay_payment_id', response.razorpay_payment_id || '');
+                                        verifyParams.append('razorpay_order_id', response.razorpay_order_id || '');
+                                        verifyParams.append('razorpay_signature', response.razorpay_signature || '');
+                                        verifyParams.append('attempt_reference', data.attempt_reference || '');
+
+                                        fetch('/payment/razorpay/verify', {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/x-www-form-urlencoded',
+                                                'X-Requested-With': 'XMLHttpRequest'
+                                            },
+                                            body: verifyParams
+                                        })
+                                        .then(vRes => vRes.json())
+                                        .then(vData => {
+                                            if (vData.success && vData.redirect_url) {
+                                                window.location.href = vData.redirect_url;
+                                            } else {
+                                                this.isProcessing = false;
+                                                alert(vData.error || 'Payment verification failed. Please contact store support.');
+                                            }
+                                        })
+                                        .catch(err => {
+                                            this.isProcessing = false;
+                                            alert('Verification communication error. If money was deducted, your order will automatically be confirmed in a moment.');
+                                        });
+                                    },
+                                    prefill: {
+                                        name: data.customer_name || this.customerName,
+                                        contact: data.customer_phone || this.customerPhone,
+                                        email: data.customer_email || ''
+                                    },
+                                    theme: {
+                                        color: '#235d3a'
+                                    },
+                                    modal: {
+                                        ondismiss: () => {
+                                            this.isProcessing = false;
+                                        }
+                                    }
+                                };
+
+                                const rzp = new Razorpay(options);
+                                rzp.on('payment.failed', (failResp) => {
+                                    this.isProcessing = false;
+                                    const desc = (failResp && failResp.error && failResp.error.description) 
+                                        ? failResp.error.description 
+                                        : 'Payment was declined or cancelled.';
+                                    alert('Payment failed: ' + desc);
+                                });
+                                rzp.open();
+                            }
+                        })
+                        .catch(err => {
+                            this.isProcessing = false;
+                            alert('A network error occurred while preparing checkout. Please try again.');
+                        });
+                    }
+                };
             });
+        } catch (e) {
+            console.error('Failed to register checkoutPage component', e);
         }
     }
-}">
+
+    document.addEventListener('alpine:init', initCheckoutComponent);
+    if (window.Alpine) {
+        initCheckoutComponent();
+    }
+})();
+</script>
+
+<div class="max-w-md mx-auto px-4 py-4 sm:py-6" x-data="checkoutPage(window.__CHECKOUT_CONFIG__)">
 
     <!-- Flash Notification Banner -->
     <?php $flash = get_flash(); if ($flash): ?>
@@ -344,10 +426,10 @@ $idempotencyKey = bin2hex(random_bytes(16));
             <span>Delivery Not Available</span>
         </div>
         <p class="text-red-700 leading-relaxed" x-text="locationStatusText || 'Sorry, delivery is not available at your location.'"></p>
-        <p class="text-[11px] text-red-600 pt-1">Please reposition your pin within our Jaora service zones or select an active locality from the list below.</p>
+        <p class="text-[11px] text-red-600 pt-1">Please select an active delivery locality from the list below.</p>
     </div>
 
-    <form action="/checkout/place" method="POST" data-no-loader @submit="handleCheckoutSubmit($event)" class="space-y-6">
+    <form id="checkoutOrderForm" action="/checkout/place" method="POST" data-no-loader @submit="handleCheckoutSubmit($event)" class="space-y-6">
         <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
         <input type="hidden" name="idempotency_key" value="<?= $idempotencyKey ?>">
         <input type="hidden" name="fulfilment_method" value="delivery">
@@ -358,7 +440,7 @@ $idempotencyKey = bin2hex(random_bytes(16));
         <input type="hidden" name="delivery_area_id" :value="selectedAreaId">
         <input type="hidden" name="delivery_area_name" :value="deliveryAreaName">
 
-        <!-- SECTION 1: Delivery Address & Map-Based Location Selection -->
+        <!-- SECTION 1: Delivery Address & Location Selection -->
         <div class="space-y-3">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2 text-sm font-bold text-gray-800">
@@ -370,11 +452,11 @@ $idempotencyKey = bin2hex(random_bytes(16));
                 </div>
 
                 <!-- Matched Area Pill Badge -->
-                <template x-if="deliveryAreaName && deliveryAvailable">
+                <div x-show="deliveryAreaName && deliveryAvailable" x-cloak>
                     <span class="text-[10px] bg-emerald-50 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-200">
                         📍 <span x-text="deliveryAreaName"></span>
                     </span>
-                </template>
+                </div>
             </div>
 
             <!-- Address Card -->
@@ -384,17 +466,17 @@ $idempotencyKey = bin2hex(random_bytes(16));
                 <div x-show="!editAddress" class="flex items-start gap-3">
                     <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1.5 shrink-0"></div>
                     <div class="flex-grow space-y-1 pr-12">
-                        <p class="font-bold text-sm text-gray-900" x-text="customerName"></p>
-                        <p class="text-xs text-gray-500 font-medium" x-text="customerPhone"></p>
-                        <p class="text-xs text-gray-600 leading-relaxed pt-0.5" x-text="customerAddress"></p>
-                        <template x-if="customerLandmark">
+                        <p class="font-bold text-sm text-gray-900" x-text="customerName || '<?= e($savedName) ?>'"><?= e($savedName) ?></p>
+                        <p class="text-xs text-gray-500 font-medium" x-text="customerPhone || '<?= e($savedPhone) ?>'"><?= e($savedPhone) ?></p>
+                        <p class="text-xs text-gray-600 leading-relaxed pt-0.5" x-text="customerAddress || '<?= e($savedAddress) ?>'"><?= e($savedAddress) ?></p>
+                        <div x-show="customerLandmark" x-cloak>
                             <p class="text-[11px] text-gray-500 italic">Landmark: <span x-text="customerLandmark"></span></p>
-                        </template>
+                        </div>
                     </div>
                     <button 
                         type="button" 
                         @click="editAddress = true"
-                        class="absolute top-4 right-4 text-xs font-semibold text-brand-600 hover:text-brand-700 underline"
+                        class="absolute top-4 right-4 text-xs font-semibold text-brand-600 hover:text-brand-700 underline cursor-pointer"
                     >
                         Edit
                     </button>
@@ -419,7 +501,7 @@ $idempotencyKey = bin2hex(random_bytes(16));
                         <input type="text" x-model="customerLandmark" name="landmark" placeholder="e.g. Near Jain Mandir, Opposite City Hospital" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
                     </div>
                     <div class="flex justify-end gap-2 pt-1">
-                        <button type="button" @click="editAddress = false" class="bg-brand-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-brand-700">
+                        <button type="button" @click="editAddress = false" class="bg-brand-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-brand-700 cursor-pointer">
                             Done
                         </button>
                     </div>
@@ -455,15 +537,15 @@ $idempotencyKey = bin2hex(random_bytes(16));
                     <?php endif; ?>
 
                     <!-- Live verification status banner -->
-                    <template x-if="locationStatusText">
-                        <div 
-                            class="p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-2"
-                            :class="deliveryAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'"
-                        >
-                            <span x-text="deliveryAvailable ? '📍' : '⚠️'"></span>
-                            <span x-text="locationStatusText"></span>
-                        </div>
-                    </template>
+                    <div 
+                        x-show="locationStatusText" 
+                        x-cloak
+                        class="p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-2"
+                        :class="deliveryAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'"
+                    >
+                        <span x-text="deliveryAvailable ? '📍' : '⚠️'"></span>
+                        <span x-text="locationStatusText"></span>
+                    </div>
                 </div>
 
             </div>
@@ -496,7 +578,7 @@ $idempotencyKey = bin2hex(random_bytes(16));
                         <button 
                             type="button" 
                             @click="document.getElementById('removeCheckoutCouponForm').submit()" 
-                            class="text-xs font-bold text-red-600 hover:text-red-700 hover:underline shrink-0"
+                            class="text-xs font-bold text-red-600 hover:text-red-700 hover:underline shrink-0 cursor-pointer"
                         >
                             Remove
                         </button>
@@ -514,7 +596,7 @@ $idempotencyKey = bin2hex(random_bytes(16));
                         <button 
                             type="button" 
                             onclick="applyCheckoutCoupon()" 
-                            class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow-xs shrink-0"
+                            class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow-xs shrink-0 cursor-pointer"
                         >
                             Apply
                         </button>
@@ -627,21 +709,21 @@ $idempotencyKey = bin2hex(random_bytes(16));
             </div>
 
             <!-- Discount Row -->
-            <div class="flex justify-between text-emerald-700 font-semibold" x-show="discountAmount > 0" x-cloak>
+            <div class="flex justify-between text-emerald-700 font-semibold" x-show="hasDiscount" x-cloak>
                 <span>Coupon Discount (<span x-text="couponCode"></span>):</span>
-                <span>-₹<span x-text="discountAmount.toFixed(2)"></span></span>
+                <span>-₹<span x-text="formattedDiscount"></span></span>
             </div>
 
             <!-- Delivery Row (Always rendered server-side and live reactive) -->
             <div class="flex justify-between items-center text-xs text-gray-600">
                 <span>Delivery Charge:</span>
                 <div class="font-bold">
-                    <span x-show="effectiveDeliveryFee <= 0" class="text-emerald-700 font-bold" <?= $effectiveDelivery <= 0 ? '' : 'style="display:none"' ?>>
-                        <span x-show="defaultDeliveryFee > 0" class="line-through text-gray-400 font-normal mr-1">₹<span x-text="defaultDeliveryFee.toFixed(2)"><?= number_format($baseDeliveryCharge, 2) ?></span></span>
+                    <span x-show="isFreeDelivery" class="text-emerald-700 font-bold" <?= $effectiveDelivery <= 0 ? '' : 'style="display:none"' ?>>
+                        <span x-show="isDefaultDeliveryFeePositive" class="line-through text-gray-400 font-normal mr-1">₹<span x-text="formattedDefaultDeliveryFee"><?= number_format($baseDeliveryCharge, 2) ?></span></span>
                         <span>FREE</span>
                     </span>
-                    <span x-show="effectiveDeliveryFee > 0" class="text-gray-900 font-bold" <?= $effectiveDelivery > 0 ? '' : 'style="display:none"' ?>>
-                        ₹<span x-text="effectiveDeliveryFee.toFixed(2)"><?= number_format($effectiveDelivery, 2) ?></span>
+                    <span x-show="!isFreeDelivery" class="text-gray-900 font-bold" <?= $effectiveDelivery > 0 ? '' : 'style="display:none"' ?>>
+                        ₹<span x-text="formattedDeliveryFee"><?= number_format($effectiveDelivery, 2) ?></span>
                     </span>
                 </div>
             </div>
@@ -668,7 +750,7 @@ $idempotencyKey = bin2hex(random_bytes(16));
                 class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-base py-3.5 px-6 rounded-xl flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
                 <svg x-show="isProcessing" class="animate-spin w-5 h-5 text-white shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-                <span x-text="!deliveryAvailable ? 'Delivery Not Available At Your Location' : (isProcessing ? processingMessage : (paymentMethod === 'online' ? 'Proceed to Razorpay Payment' : 'Place Order'))">
+                <span x-text="submitButtonText">
                     <?= $defaultPaymentMethod === 'online' ? 'Proceed to Razorpay Payment' : 'Place Order' ?>
                 </span>
             </button>
@@ -699,7 +781,6 @@ $idempotencyKey = bin2hex(random_bytes(16));
         document.getElementById('hiddenCouponCode').value = val;
         document.getElementById('applyCheckoutCouponForm').submit();
     }
-
     </script>
 
 </div>
