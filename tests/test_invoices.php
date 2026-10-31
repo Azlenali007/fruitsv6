@@ -89,4 +89,6 @@ it_inv("Invoice::countAll returns matching count", $count >= 1);
 $pdo->prepare("DELETE FROM `orders` WHERE `id` = ?")->execute([$orderRecord['id']]);
 
 echo "\n--- INVOICE TEST SUITE SUMMARY: {$invPass} PASSED, {$invFail} FAILED ---\n";
-exit($invFail > 0 ? 1 : 0);
+if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
+    exit($invFail > 0 ? 1 : 0);
+}

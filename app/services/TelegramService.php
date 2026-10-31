@@ -66,7 +66,7 @@ class TelegramService {
     }
 
     /**
-     * Enqueue order notification asynchronously in the database-backed task queue.
+     * Enqueue order notification asynchronously in the database-backed Telegram queue.
      * Prevents duplicate notifications for the same order and event.
      *
      * @param int $orderId
@@ -75,13 +75,8 @@ class TelegramService {
      */
     public static function enqueueOrderNotification(int $orderId, string $event = 'order_placed'): bool {
         try {
-            $idempotencyToken = "telegram_{$event}_{$orderId}";
-            BackgroundTaskService::enqueue('telegram_order_notification', $orderId, [
-                'order_id' => $orderId,
-                'event' => $event,
-                'enqueued_at' => date('Y-m-d H:i:s')
-            ], $idempotencyToken);
-            return true;
+            $res = TelegramQueueService::enqueue($orderId, $event);
+            return !empty($res['success']);
         } catch (Throwable $e) {
             error_log("Failed to enqueue Telegram order notification for Order #{$orderId}: " . $e->getMessage());
             return false;

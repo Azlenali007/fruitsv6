@@ -472,6 +472,168 @@ $settings = Setting::getAll();
                     <span x-show="testMsg" x-text="testMsg" class="font-bold text-xs" :class="testSuccess ? 'text-emerald-700' : 'text-red-600'"></span>
                 </div>
             </div>
+
+            <?php $queueStats = TelegramQueueService::getQueueStats(); ?>
+            <!-- 30-Second Background Worker & Queue Telemetry Card -->
+            <div class="mt-4 pt-4 border-t border-gray-100" x-data="{
+                runningWorker: false,
+                retryingQueue: false,
+                workerActionMsg: '',
+                stats: <?= htmlspecialchars(json_encode($queueStats), ENT_QUOTES, 'UTF-8') ?>,
+                refreshStats() {
+                    fetch('/admin/telegram/queue/stats')
+                        .then(r => r.json())
+                        .then(d => { if (d.success && d.stats) this.stats = d.stats; });
+                },
+                runWorkerNow() {
+                    this.runningWorker = true;
+                    this.workerActionMsg = '';
+                    fetch('/admin/telegram/worker/run', { method: 'POST' })
+                        .then(r => r.json())
+                        .then(d => {
+                            this.runningWorker = false;
+                            this.workerActionMsg = d.message || 'Worker finished processing queue.';
+                            if (d.stats) this.stats = d.stats;
+                        })
+                        .catch(() => {
+                            this.runningWorker = false;
+                            this.workerActionMsg = 'Error communicating with worker.';
+                        });
+                },
+                retryFailed() {
+                    this.retryingQueue = true;
+                    this.workerActionMsg = '';
+                    fetch('/admin/telegram/queue/retry', { method: 'POST' })
+                        .then(r => r.json())
+                        .then(d => {
+                            this.retryingQueue = false;
+                            this.workerActionMsg = d.message || 'Failed notifications reset to pending.';
+                            if (d.stats) this.stats = d.stats;
+                        })
+                        .catch(() => {
+                            this.retryingQueue = false;
+                            this.workerActionMsg = 'Error retrying queue items.';
+                        });
+                }
+            }">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs font-bold text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
+                            <span class="relative flex h-2.5 w-2.5">
+                                <span :class="stats.is_worker_alive ? 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75' : ''"></span>
+                                <span :class="stats.is_worker_alive ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500' : 'relative inline-flex rounded-full h-2.5 w-2.5 bg-red-400'"></span>
+                            </span>
+                            <span>30-Second Worker & Queue Monitor</span>
+                        </span>
+                    </div>
+
+                    <div class="flex items-center gap-2 text-[11px]">
+                        <span class="text-gray-500">Worker Status:</span>
+                        <span 
+                            class="font-bold px-2 py-0.5 rounded-full uppercase text-[10px]"
+                            :class="stats.is_worker_alive ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'"
+                            x-text="stats.is_worker_alive ? ('Active (Pulse ' + stats.seconds_since_heartbeat + 's ago)') : 'Inactive / Awaiting Pulse'"
+                        ></span>
+                    </div>
+                </div>
+
+                <!-- Queue metrics grid -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3 text-center">
+                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
+                        <div class="text-[10px] uppercase font-bold text-amber-700">Pending</div>
+                        <div class="text-lg font-black text-amber-900" x-text="stats.pending">0</div>
+                        <div class="text-[9px] text-gray-400">waiting for 30s cycle</div>
+                    </div>
+                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
+                        <div class="text-[10px] uppercase font-bold text-blue-700">Processing</div>
+                        <div class="text-lg font-black text-blue-900" x-text="stats.processing">0</div>
+                        <div class="text-[9px] text-gray-400">claimed by worker</div>
+                    </div>
+                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
+                        <div class="text-[10px] uppercase font-bold text-emerald-700">Delivered</div>
+                        <div class="text-lg font-black text-emerald-900" x-text="stats.sent">0</div>
+                        <div class="text-[9px] text-gray-400">sent to Telegram</div>
+                    </div>
+                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
+                        <div class="text-[10px] uppercase font-bold text-red-700">Failed</div>
+                        <div class="text-lg font-black text-red-900" x-text="stats.failed">0</div>
+                        <div class="text-[9px] text-gray-400">after max retries</div>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                    <div class="flex items-center gap-2">
+                        <button 
+                            type="button" 
+                            @click="runWorkerNow()"
+                            :disabled="runningWorker"
+                            class="bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 text-[11px] disabled:opacity-50 cursor-pointer"
+                        >
+                            <span x-show="!runningWorker">⚡ Process Queue Now</span>
+                            <span x-show="runningWorker">Processing batch...</span>
+                        </button>
+                        <button 
+                            type="button" 
+                            @click="retryFailed()"
+                            :disabled="retryingQueue || stats.failed === 0"
+                            class="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 text-[11px] disabled:opacity-50 cursor-pointer"
+                        >
+                            <span x-show="!retryingQueue">🔄 Retry Failed (<span x-text="stats.failed"></span>)</span>
+                            <span x-show="retryingQueue">Resetting queue...</span>
+                        </button>
+                        <button 
+                            type="button" 
+                            @click="refreshStats()"
+                            class="text-gray-400 hover:text-gray-600 p-1 text-[11px]"
+                            title="Refresh statistics"
+                        >
+                            🔄 Refresh
+                        </button>
+                    </div>
+
+                    <span x-show="workerActionMsg" x-text="workerActionMsg" class="font-bold text-[11px] text-emerald-700"></span>
+                </div>
+
+                <!-- Recent notifications table snippet -->
+                <template x-if="stats.recent_jobs && stats.recent_jobs.length > 0">
+                    <div class="mt-3 overflow-x-auto border border-gray-100 rounded-xl">
+                        <table class="w-full text-left text-[11px]">
+                            <thead class="bg-gray-50 border-b border-gray-100 text-gray-500 font-bold uppercase text-[9px]">
+                                <tr>
+                                    <th class="py-2 px-3">Order</th>
+                                    <th class="py-2 px-3">Event</th>
+                                    <th class="py-2 px-3">Status</th>
+                                    <th class="py-2 px-3">Attempts</th>
+                                    <th class="py-2 px-3">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <template x-for="j in stats.recent_jobs" :key="j.id">
+                                    <tr class="hover:bg-gray-50/50">
+                                        <td class="py-1.5 px-3 font-mono font-bold text-gray-800" x-text="j.order_number || ('#' + j.order_id)"></td>
+                                        <td class="py-1.5 px-3 capitalize text-gray-600" x-text="(j.event_type || '').replace('_', ' ')"></td>
+                                        <td class="py-1.5 px-3">
+                                            <span 
+                                                class="px-2 py-0.5 rounded-full font-bold text-[9px] uppercase"
+                                                :class="{
+                                                    'bg-amber-100 text-amber-800': j.status === 'pending',
+                                                    'bg-blue-100 text-blue-800': j.status === 'processing',
+                                                    'bg-emerald-100 text-emerald-800': j.status === 'sent',
+                                                    'bg-red-100 text-red-800': j.status === 'failed'
+                                                }"
+                                                x-text="j.status"
+                                            ></span>
+                                        </td>
+                                        <td class="py-1.5 px-3 text-gray-500" x-text="j.attempts + ' / ' + j.max_attempts"></td>
+                                        <td class="py-1.5 px-3 text-gray-400" x-text="j.created_at"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </template>
+            </div>
         </div>
 
         <div class="flex justify-end">

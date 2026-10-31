@@ -1069,6 +1069,43 @@ try {
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
+        case '/admin/telegram/worker/run':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                $batchSize = isset($_POST['batch']) ? (int)$_POST['batch'] : 10;
+                $summary = TelegramQueueService::processBatch($batchSize);
+                $stats = TelegramQueueService::getQueueStats();
+                json_response([
+                    'success' => true,
+                    'summary' => $summary,
+                    'stats' => $stats,
+                    'message' => "Worker cycle executed: {$summary['claimed']} processed ({$summary['sent']} sent, {$summary['retrying']} scheduled for retry, {$summary['failed']} failed, {$summary['skipped']} skipped)."
+                ]);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/admin/telegram/queue/retry':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                $retriedCount = TelegramQueueService::retryFailedJobs();
+                $stats = TelegramQueueService::getQueueStats();
+                json_response([
+                    'success' => true,
+                    'retried_count' => $retriedCount,
+                    'stats' => $stats,
+                    'message' => "{$retriedCount} failed notifications have been reset to pending for immediate processing."
+                ]);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/admin/telegram/queue/stats':
+            AuthService::requireAdmin();
+            $stats = TelegramQueueService::getQueueStats();
+            json_response(['success' => true, 'stats' => $stats]);
+            break;
+
         case '/admin/reports':
             AuthService::requireAdmin();
             require __DIR__ . '/../app/views/admin/reports.php';
