@@ -1,0 +1,32 @@
+# N.A Fresh Fruits & Coconuts - Public Directory Access Control
+Options -Indexes -MultiViews
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Block path traversal attempts
+    RewriteCond %{THE_REQUEST} (\.\./|\.\.\\) [NC,OR]
+    RewriteCond %{QUERY_STRING} (\.\./|\.\.\\) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block access to hidden files/directories (except PWA icons/manifest)
+    <FilesMatch "^\.">
+        Require all denied
+    </FilesMatch>
+
+    # Block direct access to sensitive extensions in public
+    <FilesMatch "\.(sql|log|lock|env|md|sh|yml|yaml|ini|bak|swp|ts|tsx)$">
+        Require all denied
+    </FilesMatch>
+
+    # Serve existing files and directories directly
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Route all non-static requests to public/index.php
+    RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+DirectoryIndex index.php index.html

@@ -69,7 +69,9 @@ class CustomerAuthService {
         }
 
         // Authentication success: regenerate session ID to prevent session fixation
-        session_regenerate_id(true);
+        if (!headers_sent()) {
+            session_regenerate_id(true);
+        }
 
         $_SESSION[self::SESSION_CUSTOMER_ID] = (int)$customer['id'];
         $_SESSION[self::SESSION_CUSTOMER_NAME] = $customer['name'];
@@ -164,7 +166,9 @@ class CustomerAuthService {
         }
 
         // 3. Log in newly registered user immediately
-        session_regenerate_id(true);
+        if (!headers_sent()) {
+            session_regenerate_id(true);
+        }
         $_SESSION[self::SESSION_CUSTOMER_ID] = $customerId;
         $_SESSION[self::SESSION_CUSTOMER_NAME] = $name;
         $_SESSION[self::SESSION_CUSTOMER_PHONE] = '+91 ' . $cleanPhone;
@@ -186,7 +190,9 @@ class CustomerAuthService {
         unset($_SESSION[self::SESSION_CUSTOMER_NAME]);
         unset($_SESSION[self::SESSION_CUSTOMER_PHONE]);
         unset($_SESSION[self::SESSION_CUSTOMER_EMAIL]);
-        session_regenerate_id(true);
+        if (!headers_sent()) {
+            session_regenerate_id(true);
+        }
     }
 
     /**

@@ -198,6 +198,14 @@ require_once __DIR__ . '/test_razorpay_multi_product.php';
 $passCount += $mpPass;
 $failCount += $mpFail;
 
+// ---------------------------------------------------------
+// 14. MASTER SECURITY, ACCESS CONTROL & AUDIT SUITE
+// ---------------------------------------------------------
+echo "\n";
+require_once __DIR__ . '/test_security_audit.php';
+$passCount += $secPass;
+$failCount += $secFail;
+
 echo "\n========================================================\n";
 echo "OVERALL SYSTEM SUMMARY: {$passCount} PASSED, {$failCount} FAILED\n";
 echo "========================================================\n";

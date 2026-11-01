@@ -16,9 +16,80 @@ require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/../app/controllers/InstallerController.php';
 
 // Parse incoming request path
-$rawUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$rawUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '/';
 $uri = urldecode($rawUri);
-$method = $_SERVER['REQUEST_METHOD'];
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+// ----------------------------------------------------
+// SECURITY ENFORCEMENT & ACCESS CONTROL
+// ----------------------------------------------------
+
+// 1. Block Path Traversal & Null-Byte Injection Attacks
+if (str_contains($rawUri, '..') || str_contains($uri, '..') || str_contains($rawUri, "\0") || str_contains($uri, "\0")) {
+    http_response_code(400);
+    exit('Illegal path characters detected.');
+}
+
+// 2. Block Direct Web Access to Internal Application Directories
+$blockedPrefixes = ['/app', '/storage', '/database', '/cron', '/bin', '/tests', '/node_modules', '/.git', '/.env'];
+foreach ($blockedPrefixes as $prefix) {
+    if ($uri === $prefix || str_starts_with($uri, $prefix . '/')) {
+        http_response_code(403);
+        exit('Access to internal application directories is forbidden.');
+    }
+}
+
+// 3. Block Direct Web Access to Protected File Extensions
+if (preg_match('/\.(sql|log|lock|env|md|sh|yml|yaml|ini|bak|swp|ts|tsx)$/i', $uri)) {
+    http_response_code(403);
+    exit('Direct access to protected file types is forbidden.');
+}
+
+// 4. Validate Host Header (Mitigate Host Header Injection & Poisoning)
+$httpHost = $_SERVER['HTTP_X_FORWARDED_HOST'] ?? $_SERVER['HTTP_HOST'] ?? '';
+$hostOnly = strtolower(explode(':', $httpHost)[0]);
+if (!empty($hostOnly)) {
+    $allowedHosts = [
+        'nifruitjaora.shop',
+        'www.nifruitjaora.shop',
+        'localhost',
+        '127.0.0.1',
+        '::1'
+    ];
+    $isAllowed = in_array($hostOnly, $allowedHosts, true) || str_ends_with($hostOnly, '.run.app');
+    if (!$isAllowed) {
+        $envAllowed = getenv('APP_ALLOWED_HOSTS') ? explode(',', getenv('APP_ALLOWED_HOSTS')) : [];
+        foreach ($envAllowed as $ea) {
+            if ($hostOnly === strtolower(trim($ea))) {
+                $isAllowed = true;
+                break;
+            }
+        }
+    }
+    if (!$isAllowed) {
+        http_response_code(400);
+        exit('Invalid or untrusted Host header.');
+    }
+
+    // Canonical Redirection: Redirect www to apex domain, and enforce HTTPS in production
+    if ($hostOnly === 'www.nifruitjaora.shop') {
+        header('Location: https://nifruitjaora.shop' . ($_SERVER['REQUEST_URI'] ?? '/'), true, 301);
+        exit;
+    }
+    if ($hostOnly === 'nifruitjaora.shop') {
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+        if (!$isHttps && php_sapi_name() !== 'cli-server') {
+            header('Location: https://nifruitjaora.shop' . ($_SERVER['REQUEST_URI'] ?? '/'), true, 301);
+            exit;
+        }
+    }
+}
+
+// 5. Standard Security Response Headers
+header('X-Frame-Options: SAMEORIGIN');
+header('X-Content-Type-Options: nosniff');
+header('X-XSS-Protection: 1; mode=block');
+header('Referrer-Policy: strict-origin-when-cross-origin');
 
 // Normalize slashes (e.g. /shop/ -> /shop)
 if ($uri !== '/' && str_ends_with($uri, '/')) {
@@ -793,9 +864,11 @@ try {
         case '/admin/logout':
             if ($method === 'POST') {
                 verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '');
-                AuthService::logout();
             }
+            AuthService::logout();
+            set_flash('info', 'You have been safely logged out of Store Admin.');
             header('Location: /admin/login');
+            exit;
             break;
 
         case '/admin':

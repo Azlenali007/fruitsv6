@@ -1,11 +1,42 @@
+# N.A Fresh Fruits & Coconuts - Root Access Control & Security
+Options -Indexes -MultiViews
+
+# Block access to hidden files/directories (starting with .)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# Block access to sensitive file extensions
+<FilesMatch "\.(sql|log|lock|env|md|sh|yml|yaml|json|config|bak|swp|dist|ts|tsx)$">
+    # Exception: allow public PWA manifest
+    <If "%{REQUEST_URI} =~ m#^/manifest\.json#">
+        Require all granted
+    </If>
+    <Else>
+        Require all denied
+    </Else>
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
 
-    # Ensure /install and /install/* route to public front controller
+    # Block direct web access to internal application directories
+    RewriteRule ^(app|storage|database|cron|bin|tests|node_modules)(\/.*)?$ - [F,L,NC]
+
+    # Block path traversal attempts
+    RewriteCond %{THE_REQUEST} (\.\./|\.\.\\) [NC,OR]
+    RewriteCond %{QUERY_STRING} (\.\./|\.\.\\) [NC]
+    RewriteRule .* - [F,L]
+
+    # Route /install and /install/* to public front controller
     RewriteRule ^install(/.*)?$ public/index.php [L,QSA]
 
-    # Serve existing files and directories directly
+    # Serve public assets directly if accessed via /assets/...
+    RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
+    RewriteRule ^(assets/.*)$ public/$1 [L]
+
+    # Serve existing files and directories directly if in public/
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]

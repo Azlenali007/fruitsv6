@@ -26,7 +26,9 @@ class AuthService {
         }
 
         // Login success: regenerate session ID to prevent session fixation attacks
-        session_regenerate_id(true);
+        if (!headers_sent()) {
+            session_regenerate_id(true);
+        }
 
         $_SESSION[self::SESSION_ADMIN_ID] = $admin['id'];
         $_SESSION[self::SESSION_ADMIN_USER] = $admin['username'];
@@ -45,7 +47,9 @@ class AuthService {
         unset($_SESSION[self::SESSION_ADMIN_ID]);
         unset($_SESSION[self::SESSION_ADMIN_USER]);
         unset($_SESSION['na_admin_name']);
-        session_regenerate_id(true);
+        if (!headers_sent()) {
+            session_regenerate_id(true);
+        }
     }
 
     public static function check(): bool {

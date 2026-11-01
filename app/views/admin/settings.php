@@ -473,7 +473,11 @@ $settings = Setting::getAll();
                 </div>
             </div>
 
-            <?php $queueStats = TelegramQueueService::getQueueStats(); ?>
+            <?php 
+                $queueStats = TelegramQueueService::getQueueStats(); 
+                $projectRoot = realpath(__DIR__ . '/../../..');
+                $cronCommand = "* * * * * /usr/bin/php {$projectRoot}/cron/telegram-notifications.php >> {$projectRoot}/storage/logs/telegram_cron.log 2>&1";
+            ?>
             <!-- Server-Side Cron Job & Queue Telemetry Card -->
             <div class="mt-4 pt-4 border-t border-gray-100" x-data="{
                 runningWorker: false,
@@ -517,7 +521,7 @@ $settings = Setting::getAll();
                         });
                 },
                 copyCronCommands() {
-                    const cmd = '* * * * * /usr/bin/php /app/applet/cron/telegram-notifications.php >> /app/applet/storage/logs/telegram_cron.log 2>&1';
+                    const cmd = <?= json_encode($cronCommand) ?>;
                     if (navigator.clipboard) {
                         navigator.clipboard.writeText(cmd).then(() => {
                             this.copiedCron = true;
@@ -601,7 +605,7 @@ $settings = Setting::getAll();
                     <p class="text-[10px] text-slate-400 mb-2">
                         Only ONE Cron Job entry is required. The script executes automatically every minute and performs two processing cycles 30 seconds apart:
                     </p>
-                    <pre class="bg-black/50 p-2.5 rounded-xl text-[10px] font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed select-all border border-slate-800">* * * * * /usr/bin/php /app/applet/cron/telegram-notifications.php >> /app/applet/storage/logs/telegram_cron.log 2>&1</pre>
+                    <pre class="bg-black/50 p-2.5 rounded-xl text-[10px] font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed select-all border border-slate-800"><?= e($cronCommand) ?></pre>
                 </div>
 
                 <!-- Action buttons -->

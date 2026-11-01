@@ -39,19 +39,26 @@ CREATE TABLE IF NOT EXISTS `settings` (
 -- 4. Products Table
 CREATE TABLE IF NOT EXISTS `products` (
     `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `category_id` INT UNSIGNED NULL,
     `name` VARCHAR(150) NOT NULL,
     `slug` VARCHAR(150) NOT NULL UNIQUE,
     `tagline` VARCHAR(255) NOT NULL DEFAULT 'Pure • Natural • Healthy',
     `description` TEXT NOT NULL,
     `price` DECIMAL(10,2) NOT NULL DEFAULT 40.00,
+    `original_price` DECIMAL(10,2) NULL DEFAULT NULL,
     `stock_quantity` INT NOT NULL DEFAULT 100,
     `is_available` TINYINT(1) NOT NULL DEFAULT 1,
+    `has_cutting_options` TINYINT(1) NOT NULL DEFAULT 0,
+    `cutting_options_json` TEXT NULL,
+    `is_featured` TINYINT(1) NOT NULL DEFAULT 0,
+    `sort_order` INT NOT NULL DEFAULT 0,
     `image_url` VARCHAR(255) NOT NULL,
     `gallery_json` TEXT NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX `idx_availability` (`is_available`),
-    INDEX `idx_slug` (`slug`)
+    INDEX `idx_slug` (`slug`),
+    INDEX `idx_category_id` (`category_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5. Customers Table
@@ -123,6 +130,12 @@ CREATE TABLE IF NOT EXISTS `order_items` (
     `order_id` INT UNSIGNED NOT NULL,
     `product_id` INT UNSIGNED NOT NULL,
     `product_name` VARCHAR(150) NOT NULL,
+    `preparation_option` VARCHAR(150) NULL DEFAULT NULL,
+    `preparation_charge` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `is_combo` TINYINT(1) NOT NULL DEFAULT 0,
+    `combo_id` INT UNSIGNED NULL DEFAULT NULL,
+    `combo_details_json` TEXT NULL DEFAULT NULL,
+    `item_notes` VARCHAR(255) NULL DEFAULT NULL,
     `unit_price` DECIMAL(10,2) NOT NULL,
     `quantity` INT UNSIGNED NOT NULL,
     `subtotal` DECIMAL(10,2) NOT NULL,
@@ -306,5 +319,71 @@ CREATE TABLE IF NOT EXISTS `invoice_sequences` (
     `last_number` INT UNSIGNED NOT NULL DEFAULT 0,
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 18. Telegram Notification Queue Table
+CREATE TABLE IF NOT EXISTS `telegram_notification_queue` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `order_id` INT UNSIGNED NOT NULL,
+    `event_type` VARCHAR(50) NOT NULL DEFAULT 'order_placed',
+    `idempotency_key` VARCHAR(100) NOT NULL UNIQUE,
+    `status` ENUM('pending', 'processing', 'sent', 'failed') NOT NULL DEFAULT 'pending',
+    `attempts` INT UNSIGNED NOT NULL DEFAULT 0,
+    `max_attempts` INT UNSIGNED NOT NULL DEFAULT 5,
+    `next_attempt_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `locked_at` DATETIME NULL,
+    `sent_at` DATETIME NULL,
+    `telegram_message_id` VARCHAR(100) NULL,
+    `last_error` TEXT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_tgq_status_next` (`status`, `next_attempt_at`),
+    INDEX `idx_tgq_order_id` (`order_id`),
+    INDEX `idx_tgq_locked` (`locked_at`),
+    INDEX `idx_tgq_idempotency` (`idempotency_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 19. Product Categories Table
+CREATE TABLE IF NOT EXISTS `categories` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `name` VARCHAR(100) NOT NULL,
+    `slug` VARCHAR(100) NOT NULL UNIQUE,
+    `description` VARCHAR(255) NULL,
+    `sort_order` INT NOT NULL DEFAULT 0,
+    `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 20. Combo Offers & Bundles Table
+CREATE TABLE IF NOT EXISTS `combos` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `name` VARCHAR(150) NOT NULL,
+    `slug` VARCHAR(150) NOT NULL UNIQUE,
+    `tagline` VARCHAR(255) NULL,
+    `description` TEXT NULL,
+    `price` DECIMAL(10,2) NOT NULL,
+    `original_price` DECIMAL(10,2) NOT NULL,
+    `image_url` VARCHAR(255) NOT NULL DEFAULT '/assets/images/hero-coconut.png',
+    `stock_quantity` INT NOT NULL DEFAULT 50,
+    `is_available` TINYINT(1) NOT NULL DEFAULT 1,
+    `start_date` DATETIME NULL,
+    `end_date` DATETIME NULL,
+    `sort_order` INT NOT NULL DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_combos_avail` (`is_available`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 21. Combo Child Items Table
+CREATE TABLE IF NOT EXISTS `combo_items` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `combo_id` INT UNSIGNED NOT NULL,
+    `product_id` INT UNSIGNED NOT NULL,
+    `quantity` INT UNSIGNED NOT NULL DEFAULT 1,
+    `notes` VARCHAR(100) NULL,
+    INDEX `idx_combo_id` (`combo_id`),
+    INDEX `idx_product_id` (`product_id`),
+    CONSTRAINT `fk_ci_combo` FOREIGN KEY (`combo_id`) REFERENCES `combos` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 

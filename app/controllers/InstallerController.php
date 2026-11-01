@@ -375,6 +375,30 @@ class InstallerController {
                         $pdo->exec($stmtSql);
                     }
 
+                    // Apply any incremental migration files in natural sort order (non-destructive)
+                    $migrationsDir = __DIR__ . '/../../database/migrations';
+                    if (is_dir($migrationsDir)) {
+                        $migrationFiles = glob($migrationsDir . '/*.sql');
+                        if (is_array($migrationFiles)) {
+                            sort($migrationFiles, SORT_NATURAL);
+                            foreach ($migrationFiles as $mFile) {
+                                $mSql = @file_get_contents($mFile);
+                                if (!empty($mSql)) {
+                                    $mStatements = self::splitSqlStatements($mSql);
+                                    foreach ($mStatements as $mStmt) {
+                                        $mStmt = trim($mStmt);
+                                        if (empty($mStmt) || preg_match('/^\s*(CREATE\s+DATABASE|USE\s+)/i', $mStmt)) continue;
+                                        try {
+                                            $pdo->exec($mStmt);
+                                        } catch (Exception $ign) {
+                                            // Non-destructive idempotent execution
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Ensure customer auth columns exist in customers table without deleting any existing records
                     $cols = $pdo->query("SHOW COLUMNS FROM `customers`")->fetchAll(PDO::FETCH_COLUMN);
                     if (!in_array('email', $cols)) {
@@ -461,7 +485,7 @@ class InstallerController {
                     // Verify required tables exist
                     $stmtVerify = $pdo->query("SHOW TABLES");
                     $postTables = $stmtVerify->fetchAll(PDO::FETCH_COLUMN);
-                    $required = ['products', 'orders', 'admins', 'settings', 'customers', 'customer_login_attempts'];
+                    $required = ['products', 'orders', 'admins', 'settings', 'customers', 'customer_login_attempts', 'categories', 'combos', 'combo_items', 'delivery_areas', 'invoices', 'telegram_notification_queue'];
                     $missingTables = array_diff($required, $postTables);
                     if (!empty($missingTables)) {
                         throw new Exception("Required tables could not be verified: " . implode(', ', $missingTables));
@@ -625,7 +649,12 @@ class InstallerController {
 
         // 2. Check Required Tables
         if ($allPassed) {
-            $requiredTables = ['admins', 'products', 'orders', 'order_items', 'settings', 'customers', 'customer_login_attempts'];
+            $requiredTables = [
+                'admins', 'products', 'orders', 'order_items', 'settings',
+                'customers', 'customer_login_attempts', 'categories',
+                'combos', 'combo_items', 'delivery_areas', 'invoices',
+                'telegram_notification_queue'
+            ];
             $stmt = $pdo->query("SHOW TABLES");
             $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);
             $missing = array_diff($requiredTables, $tables);
