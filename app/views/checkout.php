@@ -701,6 +701,42 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
             <?php endif; ?>
         </div>
 
+        <!-- SECTION 3.5: Ordered Items Breakdown -->
+        <div class="bg-white rounded-2xl p-4 border border-gray-200/90 shadow-xs space-y-3">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-800 uppercase tracking-wide">Items in Your Order (<?= count($cartData['items']) ?>)</span>
+                <a href="/cart" class="text-[11px] font-bold text-brand-600 hover:underline">Edit Cart</a>
+            </div>
+
+            <div class="divide-y divide-gray-100">
+                <?php foreach ($cartData['items'] as $cItem): ?>
+                <div class="py-2.5 flex items-start justify-between gap-3 text-xs">
+                    <div class="space-y-0.5 min-w-0">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <span class="font-bold text-gray-900"><?= (int)$cItem['quantity'] ?>&times; <?= e($cItem['name']) ?></span>
+                            <?php if (!empty($cItem['is_combo'])): ?>
+                            <span class="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-amber-100 text-amber-900">Combo</span>
+                            <?php endif; ?>
+                        </div>
+
+                        <?php if (!empty($cItem['preparation_option'])): ?>
+                        <div class="text-[11px] font-semibold text-brand-700">
+                            ✂️ <?= e($cItem['preparation_option']) ?>
+                            <?php if ((float)$cItem['preparation_charge'] > 0): ?>
+                                (+₹<?= number_format($cItem['preparation_charge']) ?>)
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+
+                        <span class="text-[11px] text-gray-400 block">₹<?= number_format($cItem['price'], 2) ?> each</span>
+                    </div>
+
+                    <span class="font-black text-gray-900 shrink-0">₹<?= number_format($cItem['subtotal'], 2) ?></span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+
         <!-- SECTION 4: Order Total Preview -->
         <div class="bg-gray-50 rounded-2xl p-4 border border-gray-100 text-xs text-gray-600 space-y-2">
             <div class="flex justify-between">

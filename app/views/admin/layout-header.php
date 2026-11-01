@@ -39,9 +39,21 @@ $navItems = [
     ],
     [
         'id' => 'products',
-        'label' => 'Products & Stock',
+        'label' => 'Products & Catalog',
         'url' => '/admin/products',
         'icon' => '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>'
+    ],
+    [
+        'id' => 'combos',
+        'label' => 'Combo Offers & Bundles',
+        'url' => '/admin/combos',
+        'icon' => '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>'
+    ],
+    [
+        'id' => 'categories',
+        'label' => 'Product Categories',
+        'url' => '/admin/categories',
+        'icon' => '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>'
     ],
     [
         'id' => 'coupons',

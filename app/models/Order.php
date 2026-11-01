@@ -32,40 +32,94 @@ class Order {
             $verifiedItems = [];
 
             foreach ($cartItems as $item) {
-                $productId = (int)$item['product_id'];
+                $isCombo = !empty($item['is_combo']) || (!empty($item['type']) && $item['type'] === 'combo');
                 $quantity = max(1, (int)$item['quantity']);
 
-                $stmtProd = $pdo->prepare("SELECT * FROM `products` WHERE `id` = ? FOR UPDATE");
-                $stmtProd->execute([$productId]);
-                $product = $stmtProd->fetch();
+                if ($isCombo) {
+                    $comboId = (int)($item['combo_id'] ?? $item['product_id'] ?? 0);
+                    $stmtCombo = $pdo->prepare("SELECT * FROM `combos` WHERE `id` = ? FOR UPDATE");
+                    $stmtCombo->execute([$comboId]);
+                    $combo = $stmtCombo->fetch();
 
-                if (!$product) {
-                    throw new Exception("Product no longer available in store.");
+                    if (!$combo) {
+                        throw new Exception("Combo offer no longer available in store.");
+                    }
+                    if (!$combo['is_available']) {
+                        throw new Exception("Combo offer '{$combo['name']}' is currently disabled.");
+                    }
+                    if ((int)$combo['stock_quantity'] < $quantity) {
+                        throw new Exception("Insufficient stock for combo '{$combo['name']}'. Only {$combo['stock_quantity']} left.");
+                    }
+
+                    $unitPrice = (float)$combo['price'];
+                    $lineTotal = round($unitPrice * $quantity, 2);
+                    $subtotal += $lineTotal;
+
+                    // Fetch combo child items snapshot
+                    $comboChildren = Combo::getItems($comboId);
+                    $comboDetailsJson = json_encode($comboChildren);
+
+                    $verifiedItems[] = [
+                        'product_id' => 0,
+                        'combo_id' => $comboId,
+                        'is_combo' => 1,
+                        'product_name' => $combo['name'],
+                        'preparation_option' => null,
+                        'preparation_charge' => 0.00,
+                        'combo_details_json' => $comboDetailsJson,
+                        'item_notes' => 'Combo Offer Bundle',
+                        'unit_price' => $unitPrice,
+                        'quantity' => $quantity,
+                        'subtotal' => $lineTotal
+                    ];
+
+                    // Atomically deduct combo stock
+                    $stmtDeductCombo = $pdo->prepare("UPDATE `combos` SET `stock_quantity` = `stock_quantity` - ?, `updated_at` = NOW() WHERE `id` = ?");
+                    $stmtDeductCombo->execute([$quantity, $comboId]);
+                } else {
+                    $productId = (int)$item['product_id'];
+                    $stmtProd = $pdo->prepare("SELECT * FROM `products` WHERE `id` = ? FOR UPDATE");
+                    $stmtProd->execute([$productId]);
+                    $product = $stmtProd->fetch();
+
+                    if (!$product) {
+                        throw new Exception("Product no longer available in store.");
+                    }
+
+                    if (!$product['is_available']) {
+                        throw new Exception("Item '{$product['name']}' is currently marked unavailable.");
+                    }
+
+                    if ((int)$product['stock_quantity'] < $quantity) {
+                        throw new Exception("Insufficient stock for '{$product['name']}'. Only {$product['stock_quantity']} left.");
+                    }
+
+                    $optionId = $item['preparation_option_id'] ?? null;
+                    $optVal = Product::validateCuttingOption($product, $optionId);
+                    $basePrice = (float)$product['price'];
+                    $optCharge = $optVal['has_option'] ? (float)$optVal['extra_charge'] : 0.00;
+                    $itemPrice = $basePrice + $optCharge;
+                    $lineTotal = round($itemPrice * $quantity, 2);
+                    $subtotal += $lineTotal;
+
+                    $verifiedItems[] = [
+                        'product_id' => $productId,
+                        'combo_id' => null,
+                        'is_combo' => 0,
+                        'product_name' => $product['name'],
+                        'preparation_option' => $optVal['option_name'],
+                        'preparation_charge' => $optCharge,
+                        'combo_details_json' => null,
+                        'item_notes' => null,
+                        'unit_price' => $itemPrice,
+                        'quantity' => $quantity,
+                        'subtotal' => $lineTotal
+                    ];
+
+                    // Atomically deduct stock
+                    $stmtDeduct = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` - ?, `updated_at` = NOW() WHERE `id` = ?");
+                    $stmtDeduct->execute([$quantity, $productId]);
                 }
-
-                if (!$product['is_available']) {
-                    throw new Exception("Item '{$product['name']}' is currently marked unavailable.");
-                }
-
-                if ($product['stock_quantity'] < $quantity) {
-                    throw new Exception("Insufficient stock for '{$product['name']}'. Only {$product['stock_quantity']} left.");
-                }
-
-                $itemPrice = (float)$product['price'];
-                $lineTotal = $itemPrice * $quantity;
-                $subtotal += $lineTotal;
-
-                $verifiedItems[] = [
-                    'product_id' => $productId,
-                    'product_name' => $product['name'],
-                    'unit_price' => $itemPrice,
-                    'quantity' => $quantity,
-                    'subtotal' => $lineTotal
-                ];
-
-                // Atomically deduct stock
-                $stmtDeduct = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` - ?, `updated_at` = NOW() WHERE `id` = ?");
-                $stmtDeduct->execute([$quantity, $productId]);
             }
 
             // 3. Validate fulfilment method & payment method
@@ -288,10 +342,13 @@ class Order {
                 );
             }
 
-            // 7. Insert Order Items (Immutable price snapshot)
+            // 7. Insert Order Items (Immutable price and configuration snapshot)
             $stmtItem = $pdo->prepare("
-                INSERT INTO `order_items` (`order_id`, `product_id`, `product_name`, `unit_price`, `quantity`, `subtotal`)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO `order_items` (
+                    `order_id`, `product_id`, `product_name`, `preparation_option`,
+                    `preparation_charge`, `is_combo`, `combo_id`, `combo_details_json`,
+                    `item_notes`, `unit_price`, `quantity`, `subtotal`
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
 
             foreach ($verifiedItems as $vi) {
@@ -299,6 +356,12 @@ class Order {
                     $orderId,
                     $vi['product_id'],
                     $vi['product_name'],
+                    $vi['preparation_option'],
+                    $vi['preparation_charge'],
+                    $vi['is_combo'],
+                    $vi['combo_id'],
+                    $vi['combo_details_json'],
+                    $vi['item_notes'],
                     $vi['unit_price'],
                     $vi['quantity'],
                     $vi['subtotal']
@@ -426,9 +489,14 @@ class Order {
             // Stock restoration rule if order transitions to cancelled from non-cancelled
             if ($orderStatus === 'cancelled' && $oldOrderStatus !== 'cancelled') {
                 $items = self::getOrderItems($orderId);
-                $stmtRestore = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` + ?, `updated_at` = NOW() WHERE `id` = ?");
+                $stmtRestoreProd = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` + ?, `updated_at` = NOW() WHERE `id` = ?");
+                $stmtRestoreCombo = $pdo->prepare("UPDATE `combos` SET `stock_quantity` = `stock_quantity` + ?, `updated_at` = NOW() WHERE `id` = ?");
                 foreach ($items as $item) {
-                    $stmtRestore->execute([$item['quantity'], $item['product_id']]);
+                    if (!empty($item['is_combo']) && !empty($item['combo_id'])) {
+                        $stmtRestoreCombo->execute([$item['quantity'], $item['combo_id']]);
+                    } elseif (!empty($item['product_id'])) {
+                        $stmtRestoreProd->execute([$item['quantity'], $item['product_id']]);
+                    }
                 }
             }
 
@@ -551,18 +619,28 @@ class Order {
             // Stock restoration rule: if order is cancelled and was not cancelled before, restore stock
             if ($newStatus === 'cancelled' && $oldStatus !== 'cancelled') {
                 $items = self::getOrderItems($orderId);
-                $stmtRestore = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` + ?, `updated_at` = NOW() WHERE `id` = ?");
+                $stmtRestoreProd = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` + ?, `updated_at` = NOW() WHERE `id` = ?");
+                $stmtRestoreCombo = $pdo->prepare("UPDATE `combos` SET `stock_quantity` = `stock_quantity` + ?, `updated_at` = NOW() WHERE `id` = ?");
                 foreach ($items as $item) {
-                    $stmtRestore->execute([$item['quantity'], $item['product_id']]);
+                    if (!empty($item['is_combo']) && !empty($item['combo_id'])) {
+                        $stmtRestoreCombo->execute([$item['quantity'], $item['combo_id']]);
+                    } elseif (!empty($item['product_id'])) {
+                        $stmtRestoreProd->execute([$item['quantity'], $item['product_id']]);
+                    }
                 }
             }
 
             // If an order was cancelled and now changed back to confirmed/delivered, re-check and re-deduct
             if ($oldStatus === 'cancelled' && $newStatus !== 'cancelled') {
                 $items = self::getOrderItems($orderId);
-                $stmtDeduct = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` - ?, `updated_at` = NOW() WHERE `id` = ?");
+                $stmtDeductProd = $pdo->prepare("UPDATE `products` SET `stock_quantity` = `stock_quantity` - ?, `updated_at` = NOW() WHERE `id` = ?");
+                $stmtDeductCombo = $pdo->prepare("UPDATE `combos` SET `stock_quantity` = `stock_quantity` - ?, `updated_at` = NOW() WHERE `id` = ?");
                 foreach ($items as $item) {
-                    $stmtDeduct->execute([$item['quantity'], $item['product_id']]);
+                    if (!empty($item['is_combo']) && !empty($item['combo_id'])) {
+                        $stmtDeductCombo->execute([$item['quantity'], $item['combo_id']]);
+                    } elseif (!empty($item['product_id'])) {
+                        $stmtDeductProd->execute([$item['quantity'], $item['product_id']]);
+                    }
                 }
             }
 

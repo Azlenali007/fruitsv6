@@ -359,20 +359,50 @@ class RazorpayService {
         $keyId = self::getKeyId();
         $keySecret = self::getKeySecret();
 
-        // In test mode without external credentials or mockHandler, provide deterministic test payment
-        if (self::$mockHandler === null && self::getEnvironment() === 'test' && (empty($keyId) || str_starts_with($keyId, 'rzp_test_sample') || empty($keySecret) || str_starts_with($paymentId, 'pay_mock_') || str_starts_with($paymentId, 'pay_test_'))) {
+        // If mock handler is set, delegate and normalize keys
+        if (self::$mockHandler !== null) {
+            $resp = call_user_func(self::$mockHandler, 'GET', '/payments/' . urlencode($paymentId), [], $keyId, $keySecret);
+            if (!empty($resp['data']) && empty($resp['payment'])) {
+                $resp['payment'] = $resp['data'];
+            } elseif (!empty($resp['payment']) && empty($resp['data'])) {
+                $resp['data'] = $resp['payment'];
+            }
+            return $resp;
+        }
+
+        // In test mode without external credentials, provide deterministic test payment matching transaction
+        if (self::getEnvironment() === 'test' && (empty($keyId) || str_starts_with($keyId, 'rzp_test_sample') || empty($keySecret) || str_starts_with($paymentId, 'pay_mock_') || str_starts_with($paymentId, 'pay_test_'))) {
+            $simAmt = 12000;
+            $simCur = 'INR';
+            $gwOrderId = 'order_test';
+            try {
+                $pdo = Database::getConnection();
+                $stmt = $pdo->prepare("SELECT * FROM `payment_transactions` WHERE `gateway_payment_id` = ? OR `gateway_order_id` = ? OR `payment_attempt_ref` = ? ORDER BY `id` DESC LIMIT 1");
+                $stmt->execute([$paymentId, $paymentId, $paymentId]);
+                $tx = $stmt->fetch();
+                if ($tx && !empty($tx['amount_paise'])) {
+                    $simAmt = (int)$tx['amount_paise'];
+                    $simCur = $tx['currency'] ?? 'INR';
+                    $gwOrderId = $tx['gateway_order_id'] ?? 'order_test';
+                }
+            } catch (Exception $e) {
+                // non-blocking
+            }
+
+            $mockPayment = [
+                'id' => $paymentId,
+                'entity' => 'payment',
+                'amount' => $simAmt,
+                'currency' => $simCur,
+                'status' => 'captured',
+                'order_id' => $gwOrderId,
+                'method' => 'upi',
+                'captured' => true
+            ];
             return [
                 'success' => true,
-                'payment' => [
-                    'id' => $paymentId,
-                    'entity' => 'payment',
-                    'amount' => 12000,
-                    'currency' => 'INR',
-                    'status' => 'captured',
-                    'order_id' => 'order_test',
-                    'method' => 'upi',
-                    'captured' => true
-                ]
+                'payment' => $mockPayment,
+                'data' => $mockPayment
             ];
         }
 
@@ -380,7 +410,18 @@ class RazorpayService {
             return ['success' => false, 'error' => 'Razorpay credentials not configured.'];
         }
 
-        return self::request('GET', '/payments/' . urlencode($paymentId), [], $keyId, $keySecret);
+        $response = self::request('GET', '/payments/' . urlencode($paymentId), [], $keyId, $keySecret);
+        if ($response['success']) {
+            $paymentData = $response['data'] ?? [];
+            return [
+                'success' => true,
+                'payment' => $paymentData,
+                'data' => $paymentData,
+                'http_code' => $response['http_code'] ?? 200
+            ];
+        }
+
+        return $response;
     }
 
     /**

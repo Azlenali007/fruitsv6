@@ -2,12 +2,17 @@
 /**
  * Cart Service
  * N.A Fresh Fruits & Coconuts
- * Manages cart state in session while strictly validating real-time prices & stock from MySQL.
+ * Supports multi-product cart, coconut cutting/preparation options, combo bundles,
+ * stock caps, and server-authoritative discount & checkout totals.
  */
 
 class CartService {
-    private const SESSION_KEY = 'na_cart';
+    public const SESSION_KEY = 'na_cart';
+    public const COUPON_SESSION_KEY = 'na_applied_coupon';
 
+    /**
+     * Normalize cart session items into structured verified items
+     */
     public static function getCart(): array {
         if (!isset($_SESSION[self::SESSION_KEY]) || !is_array($_SESSION[self::SESSION_KEY])) {
             $_SESSION[self::SESSION_KEY] = [];
@@ -18,113 +23,306 @@ class CartService {
         $subtotal = 0.00;
         $totalItemsCount = 0;
 
-        foreach ($rawItems as $productId => $qty) {
-            $product = Product::getById((int)$productId);
-            if (!$product || !$product['is_available'] || $product['stock_quantity'] <= 0) {
-                // Remove item if no longer available
-                unset($_SESSION[self::SESSION_KEY][$productId]);
+        foreach ($rawItems as $key => $entry) {
+            // Support legacy format: $key = (int)$productId, $entry = (int)$qty
+            if (is_numeric($key) && is_numeric($entry)) {
+                $type = 'product';
+                $id = (int)$key;
+                $qty = (int)$entry;
+                $optionId = null;
+            } elseif (is_array($entry)) {
+                $type = $entry['type'] ?? 'product';
+                $id = (int)($entry['id'] ?? 0);
+                $qty = (int)($entry['quantity'] ?? 1);
+                $optionId = $entry['option_id'] ?? null;
+            } else {
                 continue;
             }
 
-            // Cap quantity to current available stock
-            $safeQty = min((int)$qty, (int)$product['stock_quantity']);
-            if ($safeQty <= 0) {
-                unset($_SESSION[self::SESSION_KEY][$productId]);
+            if ($qty <= 0 || $id <= 0) {
+                unset($_SESSION[self::SESSION_KEY][$key]);
                 continue;
             }
 
-            $unitPrice = (float)$product['price'];
-            $lineTotal = $unitPrice * $safeQty;
-            $subtotal += $lineTotal;
-            $totalItemsCount += $safeQty;
+            if ($type === 'combo') {
+                $combo = Combo::getById($id);
+                if (!$combo || !$combo['is_available'] || (int)$combo['stock_quantity'] <= 0) {
+                    unset($_SESSION[self::SESSION_KEY][$key]);
+                    continue;
+                }
 
-            $verifiedItems[] = [
-                'product_id' => $product['id'],
-                'name' => $product['name'],
-                'tagline' => $product['tagline'],
-                'price' => $unitPrice,
-                'image_url' => $product['image_url'],
-                'quantity' => $safeQty,
-                'max_stock' => (int)$product['stock_quantity'],
-                'subtotal' => $lineTotal
-            ];
+                $safeQty = min($qty, (int)$combo['stock_quantity']);
+                if ($safeQty <= 0) {
+                    unset($_SESSION[self::SESSION_KEY][$key]);
+                    continue;
+                }
+
+                $unitPrice = (float)$combo['price'];
+                $lineTotal = round($unitPrice * $safeQty, 2);
+                $subtotal += $lineTotal;
+                $totalItemsCount += $safeQty;
+
+                $itemKey = 'combo_' . $id;
+
+                $verifiedItems[] = [
+                    'key' => $itemKey,
+                    'type' => 'combo',
+                    'is_combo' => true,
+                    'product_id' => 0,
+                    'combo_id' => $combo['id'],
+                    'name' => $combo['name'],
+                    'tagline' => $combo['tagline'] ?: 'Special Offer Bundle',
+                    'price' => $unitPrice,
+                    'unit_price' => $unitPrice,
+                    'original_price' => (float)$combo['original_price'],
+                    'image_url' => $combo['image_url'],
+                    'quantity' => $safeQty,
+                    'max_stock' => (int)$combo['stock_quantity'],
+                    'preparation_option' => null,
+                    'preparation_charge' => 0.00,
+                    'preparation_option_id' => null,
+                    'combo_items' => $combo['items'],
+                    'subtotal' => $lineTotal
+                ];
+            } else {
+                // Standard Product
+                $product = Product::getById($id);
+                if (!$product || !$product['is_available'] || (int)$product['stock_quantity'] <= 0) {
+                    unset($_SESSION[self::SESSION_KEY][$key]);
+                    continue;
+                }
+
+                $safeQty = min($qty, (int)$product['stock_quantity']);
+                if ($safeQty <= 0) {
+                    unset($_SESSION[self::SESSION_KEY][$key]);
+                    continue;
+                }
+
+                // Check cutting option if applicable
+                $optVal = Product::validateCuttingOption($product, $optionId);
+                $basePrice = (float)$product['price'];
+                $optCharge = $optVal['has_option'] ? (float)$optVal['extra_charge'] : 0.00;
+                $unitPrice = $basePrice + $optCharge;
+                $lineTotal = round($unitPrice * $safeQty, 2);
+                $subtotal += $lineTotal;
+                $totalItemsCount += $safeQty;
+
+                $itemKey = self::makeProductKey($id, $optVal['option_id']);
+
+                $verifiedItems[] = [
+                    'key' => $itemKey,
+                    'type' => 'product',
+                    'is_combo' => false,
+                    'product_id' => $product['id'],
+                    'combo_id' => null,
+                    'name' => $product['name'],
+                    'tagline' => $product['tagline'],
+                    'base_price' => $basePrice,
+                    'price' => $unitPrice,
+                    'unit_price' => $unitPrice,
+                    'original_price' => !empty($product['original_price']) ? (float)$product['original_price'] : null,
+                    'image_url' => $product['image_url'],
+                    'quantity' => $safeQty,
+                    'max_stock' => (int)$product['stock_quantity'],
+                    'preparation_option' => $optVal['option_name'],
+                    'preparation_charge' => $optCharge,
+                    'preparation_option_id' => $optVal['option_id'],
+                    'subtotal' => $lineTotal
+                ];
+            }
         }
 
         return [
             'items' => $verifiedItems,
             'count' => $totalItemsCount,
-            'subtotal' => $subtotal
+            'subtotal' => round($subtotal, 2)
         ];
     }
 
-    public static function addItem(int $productId, int $quantity = 1): array {
+    public static function makeProductKey(int $productId, ?string $optionId): string {
+        return 'prod_' . $productId . '_' . ($optionId ? preg_replace('~[^a-zA-Z0-9_-]~', '', $optionId) : 'default');
+    }
+
+    /**
+     * Add standard product with optional cutting option
+     */
+    public static function addItem(int $productId, int $quantity = 1, ?string $optionId = null): array {
         $product = Product::getById($productId);
         if (!$product) {
             return ['success' => false, 'error' => 'Product not found.'];
         }
-        if (!$product['is_available'] || $product['stock_quantity'] <= 0) {
+        if (!$product['is_available'] || (int)$product['stock_quantity'] <= 0) {
             return ['success' => false, 'error' => 'This product is currently out of stock.'];
         }
 
-        if (!isset($_SESSION[self::SESSION_KEY])) {
+        if (!isset($_SESSION[self::SESSION_KEY]) || !is_array($_SESSION[self::SESSION_KEY])) {
             $_SESSION[self::SESSION_KEY] = [];
         }
 
-        $currentQty = $_SESSION[self::SESSION_KEY][$productId] ?? 0;
-        $newQty = $currentQty + $quantity;
+        // Validate option
+        $optVal = Product::validateCuttingOption($product, $optionId);
+        $finalOptId = $optVal['option_id'];
+        $itemKey = self::makeProductKey($productId, $finalOptId);
 
-        if ($newQty > $product['stock_quantity']) {
-            $newQty = $product['stock_quantity'];
-        }
-
-        $_SESSION[self::SESSION_KEY][$productId] = max(1, $newQty);
-
-        return ['success' => true, 'cart' => self::getCart()];
-    }
-
-    public static function updateQuantity(int $productId, int $quantity): array {
-        if (!isset($_SESSION[self::SESSION_KEY])) {
-            $_SESSION[self::SESSION_KEY] = [];
-        }
-
-        if ($quantity <= 0) {
-            return self::removeItem($productId);
-        }
-
-        $product = Product::getById($productId);
-        if (!$product) {
-            return ['success' => false, 'error' => 'Product not found.'];
-        }
-
-        $safeQty = min($quantity, (int)$product['stock_quantity']);
-        $_SESSION[self::SESSION_KEY][$productId] = $safeQty;
-
-        return ['success' => true, 'cart' => self::getCart()];
-    }
-
-    public static function removeItem(int $productId): array {
-        if (isset($_SESSION[self::SESSION_KEY][$productId])) {
+        $existingQty = 0;
+        if (isset($_SESSION[self::SESSION_KEY][$itemKey])) {
+            $existingQty = is_array($_SESSION[self::SESSION_KEY][$itemKey]) 
+                ? (int)($_SESSION[self::SESSION_KEY][$itemKey]['quantity'] ?? 0)
+                : (int)$_SESSION[self::SESSION_KEY][$itemKey];
+        } elseif (isset($_SESSION[self::SESSION_KEY][$productId]) && is_numeric($_SESSION[self::SESSION_KEY][$productId])) {
+            // Migrate legacy numeric key
+            $existingQty = (int)$_SESSION[self::SESSION_KEY][$productId];
             unset($_SESSION[self::SESSION_KEY][$productId]);
         }
+
+        $newQty = $existingQty + max(1, $quantity);
+        if ($newQty > (int)$product['stock_quantity']) {
+            $newQty = (int)$product['stock_quantity'];
+        }
+
+        $_SESSION[self::SESSION_KEY][$itemKey] = [
+            'type' => 'product',
+            'id' => $productId,
+            'quantity' => max(1, $newQty),
+            'option_id' => $finalOptId
+        ];
+
         return ['success' => true, 'cart' => self::getCart()];
     }
 
-    public const COUPON_SESSION_KEY = 'na_applied_coupon';
+    /**
+     * Add combo bundle to cart
+     */
+    public static function addCombo(int $comboId, int $quantity = 1): array {
+        $combo = Combo::getById($comboId);
+        if (!$combo) {
+            return ['success' => false, 'error' => 'Combo offer not found.'];
+        }
+        if (!$combo['is_available'] || (int)$combo['stock_quantity'] <= 0) {
+            return ['success' => false, 'error' => 'This combo offer is currently out of stock.'];
+        }
+
+        if (!isset($_SESSION[self::SESSION_KEY]) || !is_array($_SESSION[self::SESSION_KEY])) {
+            $_SESSION[self::SESSION_KEY] = [];
+        }
+
+        $itemKey = 'combo_' . $comboId;
+        $existingQty = 0;
+        if (isset($_SESSION[self::SESSION_KEY][$itemKey])) {
+            $existingQty = is_array($_SESSION[self::SESSION_KEY][$itemKey]) 
+                ? (int)($_SESSION[self::SESSION_KEY][$itemKey]['quantity'] ?? 0)
+                : (int)$_SESSION[self::SESSION_KEY][$itemKey];
+        }
+
+        $newQty = $existingQty + max(1, $quantity);
+        if ($newQty > (int)$combo['stock_quantity']) {
+            $newQty = (int)$combo['stock_quantity'];
+        }
+
+        $_SESSION[self::SESSION_KEY][$itemKey] = [
+            'type' => 'combo',
+            'id' => $comboId,
+            'quantity' => max(1, $newQty),
+            'option_id' => null
+        ];
+
+        return ['success' => true, 'cart' => self::getCart()];
+    }
+
+    /**
+     * Update quantity by item key or legacy product ID
+     */
+    public static function updateQuantity($itemKeyOrProductId, int $quantity): array {
+        if (!isset($_SESSION[self::SESSION_KEY])) {
+            $_SESSION[self::SESSION_KEY] = [];
+        }
+
+        $key = (string)$itemKeyOrProductId;
+
+        if ($quantity <= 0) {
+            return self::removeItem($key);
+        }
+
+        // Direct key lookup
+        if (isset($_SESSION[self::SESSION_KEY][$key])) {
+            $entry = $_SESSION[self::SESSION_KEY][$key];
+            if (is_array($entry)) {
+                $maxStock = 999;
+                if (($entry['type'] ?? '') === 'combo') {
+                    $c = Combo::getById((int)$entry['id']);
+                    $maxStock = $c ? (int)$c['stock_quantity'] : 0;
+                } else {
+                    $p = Product::getById((int)$entry['id']);
+                    $maxStock = $p ? (int)$p['stock_quantity'] : 0;
+                }
+                $_SESSION[self::SESSION_KEY][$key]['quantity'] = min($quantity, $maxStock);
+            } else {
+                $p = Product::getById((int)$key);
+                $maxStock = $p ? (int)$p['stock_quantity'] : 0;
+                $_SESSION[self::SESSION_KEY][$key] = min($quantity, $maxStock);
+            }
+            return ['success' => true, 'cart' => self::getCart()];
+        }
+
+        // Legacy numeric fallback search
+        if (is_numeric($key)) {
+            $prodId = (int)$key;
+            foreach ($_SESSION[self::SESSION_KEY] as $k => $entry) {
+                if ((is_array($entry) && ($entry['type'] ?? '') === 'product' && (int)$entry['id'] === $prodId) || (is_numeric($k) && (int)$k === $prodId)) {
+                    $p = Product::getById($prodId);
+                    $maxStock = $p ? (int)$p['stock_quantity'] : 0;
+                    if (is_array($_SESSION[self::SESSION_KEY][$k])) {
+                        $_SESSION[self::SESSION_KEY][$k]['quantity'] = min($quantity, $maxStock);
+                    } else {
+                        $_SESSION[self::SESSION_KEY][$k] = min($quantity, $maxStock);
+                    }
+                    return ['success' => true, 'cart' => self::getCart()];
+                }
+            }
+        }
+
+        return ['success' => false, 'error' => 'Cart item not found.'];
+    }
+
+    /**
+     * Remove item by key or legacy product ID
+     */
+    public static function removeItem($itemKeyOrProductId): array {
+        if (!isset($_SESSION[self::SESSION_KEY])) {
+            return ['success' => true, 'cart' => self::getCart()];
+        }
+
+        $key = (string)$itemKeyOrProductId;
+
+        if (isset($_SESSION[self::SESSION_KEY][$key])) {
+            unset($_SESSION[self::SESSION_KEY][$key]);
+            return ['success' => true, 'cart' => self::getCart()];
+        }
+
+        // Legacy numeric fallback
+        if (is_numeric($key)) {
+            $prodId = (int)$key;
+            foreach ($_SESSION[self::SESSION_KEY] as $k => $entry) {
+                if ((is_array($entry) && ($entry['type'] ?? '') === 'product' && (int)$entry['id'] === $prodId) || (is_numeric($k) && (int)$k === $prodId)) {
+                    unset($_SESSION[self::SESSION_KEY][$k]);
+                }
+            }
+        }
+
+        return ['success' => true, 'cart' => self::getCart()];
+    }
 
     public static function clear(): void {
         $_SESSION[self::SESSION_KEY] = [];
         unset($_SESSION[self::COUPON_SESSION_KEY]);
     }
 
-    /**
-     * Apply coupon to current cart session after verifying all business rules.
-     */
     public static function applyCoupon(string $code, ?int $customerId = null, string $phone = '', string $fulfilment = 'delivery'): array {
         $cart = self::getCart();
         $subtotal = (float)$cart['subtotal'];
 
         if ($subtotal <= 0) {
-            return ['success' => false, 'error' => 'Your cart is empty. Add fresh coconut water before applying a coupon.'];
+            return ['success' => false, 'error' => 'Your cart is empty. Please add items before applying a coupon.'];
         }
 
         $val = Coupon::validateCoupon($code, $subtotal, $customerId, $phone, $fulfilment);
@@ -151,16 +349,10 @@ class CartService {
         ];
     }
 
-    /**
-     * Remove currently applied coupon.
-     */
     public static function removeCoupon(): void {
         unset($_SESSION[self::COUPON_SESSION_KEY]);
     }
 
-    /**
-     * Get currently applied coupon and re-validate against current cart state.
-     */
     public static function getAppliedCoupon(?int $customerId = null, string $phone = '', string $fulfilment = 'delivery'): ?array {
         if (empty($_SESSION[self::COUPON_SESSION_KEY])) {
             return null;
@@ -177,7 +369,6 @@ class CartService {
 
         $val = Coupon::validateCoupon($code, $subtotal, $customerId, $phone, $fulfilment);
         if (!$val['valid']) {
-            // Invalidated due to subtotal change, etc.
             self::removeCoupon();
             return null;
         }
@@ -197,7 +388,7 @@ class CartService {
 
     public static function calculateCheckoutTotals(string $fulfilment = 'delivery', ?int $customerId = null, string $phone = ''): array {
         $cart = self::getCart();
-        $subtotal = $cart['subtotal'];
+        $subtotal = (float)$cart['subtotal'];
         $originalDeliveryCharge = 0.00;
 
         if ($fulfilment === 'delivery' && $subtotal > 0) {
@@ -214,21 +405,21 @@ class CartService {
         $appliedCoupon = self::getAppliedCoupon($customerId, $phone, $fulfilment);
 
         if ($appliedCoupon) {
-            $discountAmount = $appliedCoupon['calculation']['discount_amount'];
-            $deliveryDiscount = $appliedCoupon['calculation']['delivery_discount'];
+            $discountAmount = (float)$appliedCoupon['calculation']['discount_amount'];
+            $deliveryDiscount = (float)$appliedCoupon['calculation']['delivery_discount'];
         }
 
         $effectiveDelivery = max(0.00, $originalDeliveryCharge - $deliveryDiscount);
         $total = max(0.00, $subtotal - $discountAmount) + $effectiveDelivery;
 
         return [
-            'subtotal' => $subtotal,
-            'original_delivery_charge' => $originalDeliveryCharge,
-            'delivery_charge' => $effectiveDelivery,
-            'discount_amount' => $discountAmount,
-            'delivery_discount' => $deliveryDiscount,
-            'total_savings' => $discountAmount + $deliveryDiscount,
-            'total' => $total,
+            'subtotal' => round($subtotal, 2),
+            'original_delivery_charge' => round($originalDeliveryCharge, 2),
+            'delivery_charge' => round($effectiveDelivery, 2),
+            'discount_amount' => round($discountAmount, 2),
+            'delivery_discount' => round($deliveryDiscount, 2),
+            'total_savings' => round($discountAmount + $deliveryDiscount, 2),
+            'total' => round($total, 2),
             'coupon' => $appliedCoupon['coupon'] ?? null,
             'coupon_calculation' => $appliedCoupon['calculation'] ?? null,
             'items' => $cart['items'],

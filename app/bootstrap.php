@@ -67,7 +67,9 @@ function json_response(array $data, int $statusCode = 200): void {
 
 // Load Models and Services
 require_once __DIR__ . '/models/Setting.php';
+require_once __DIR__ . '/models/Category.php';
 require_once __DIR__ . '/models/Product.php';
+require_once __DIR__ . '/models/Combo.php';
 require_once __DIR__ . '/models/Order.php';
 require_once __DIR__ . '/models/Admin.php';
 require_once __DIR__ . '/models/Customer.php';

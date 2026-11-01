@@ -32,12 +32,41 @@ require_once __DIR__ . '/layout-header.php';
                 <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Ordered Items Snapshot</h2>
                 <div class="divide-y divide-gray-100">
                     <?php foreach ($order['items'] as $item): ?>
-                    <div class="py-3 flex justify-between items-center text-sm">
-                        <div>
-                            <span class="font-bold text-gray-900"><?= e($item['product_name']) ?></span>
+                    <div class="py-3 flex justify-between items-start text-sm">
+                        <div class="space-y-1">
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-gray-900"><?= e($item['product_name']) ?></span>
+                                <?php if (!empty($item['is_combo'])): ?>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-amber-100 text-amber-900 border border-amber-200">
+                                    Combo Bundle
+                                </span>
+                                <?php endif; ?>
+                            </div>
+
+                            <?php if (!empty($item['preparation_option'])): ?>
+                            <div class="inline-flex items-center gap-1 text-xs font-bold text-brand-800 bg-brand-50 px-2.5 py-0.5 rounded-md border border-brand-200/60">
+                                ✂️ <span>Preparation: <?= e($item['preparation_option']) ?></span>
+                                <?php if ((float)($item['preparation_charge'] ?? 0) > 0): ?>
+                                    <span class="text-brand-900 font-extrabold">(+₹<?= number_format($item['preparation_charge'], 2) ?>)</span>
+                                <?php endif; ?>
+                            </div>
+                            <?php endif; ?>
+
+                            <?php if (!empty($item['combo_details_json'])): 
+                                $comboKids = json_decode($item['combo_details_json'], true);
+                                if (is_array($comboKids)):
+                            ?>
+                            <div class="text-[11px] text-gray-500 font-medium bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                <span class="font-bold block text-gray-600 mb-0.5">Bundle Contents:</span>
+                                <?php foreach ($comboKids as $ck): ?>
+                                <div>• <?= (int)$ck['quantity'] ?>&times; <?= e($ck['product_name']) ?></div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; endif; ?>
+
                             <span class="text-xs text-gray-400 block">Unit Price: ₹<?= number_format($item['unit_price'], 2) ?> &times; <?= (int)$item['quantity'] ?> units</span>
                         </div>
-                        <span class="font-extrabold text-gray-900">₹<?= number_format($item['subtotal'], 2) ?></span>
+                        <span class="font-extrabold text-gray-900 text-base">₹<?= number_format($item['subtotal'], 2) ?></span>
                     </div>
                     <?php endforeach; ?>
                 </div>

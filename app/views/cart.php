@@ -86,40 +86,70 @@ $total = $totals['total'];
     <div class="space-y-4 mb-6">
         <?php foreach ($items as $item): ?>
         <div class="bg-white rounded-2xl p-4 border border-gray-100 shadow-xs relative">
-            <div class="flex items-center gap-4">
+            <div class="flex items-start gap-3.5">
                 
-                <!-- Product Thumbnail -->
-                <div class="w-20 h-20 rounded-xl bg-emerald-50/70 p-1 shrink-0 overflow-hidden border border-gray-100">
+                <!-- Thumbnail -->
+                <div class="w-18 h-18 sm:w-20 sm:h-20 rounded-xl bg-emerald-50/70 p-1 shrink-0 overflow-hidden border border-gray-100">
                     <img src="<?= e($item['image_url']) ?>" alt="<?= e($item['name']) ?>" class="w-full h-full object-cover rounded-lg">
                 </div>
 
-                <!-- Product Details & Controls -->
-                <div class="flex-grow min-w-0 pr-8">
-                    <h3 class="font-bold text-gray-900 text-sm sm:text-base truncate">
-                        <?= e($item['name']) ?>
-                    </h3>
-                    <p class="text-xs font-semibold text-gray-500 mt-0.5">
-                        ₹<?= number_format($item['price']) ?> <span class="text-gray-400 font-normal">/pc</span>
+                <!-- Details & Controls -->
+                <div class="flex-grow min-w-0 pr-8 space-y-1">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <h3 class="font-bold text-gray-950 text-sm sm:text-base leading-snug">
+                            <?= e($item['name']) ?>
+                        </h3>
+                        <?php if (!empty($item['is_combo'])): ?>
+                        <span class="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-200">
+                            Combo Bundle
+                        </span>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Preparation / Cutting Option Badge -->
+                    <?php if (!empty($item['preparation_option'])): ?>
+                    <div class="inline-flex items-center gap-1 text-[11px] font-bold text-brand-800 bg-brand-50 px-2 py-0.5 rounded-md border border-brand-200/60">
+                        <svg class="w-3 h-3 text-brand-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path></svg>
+                        <span><?= e($item['preparation_option']) ?></span>
+                        <?php if ((float)$item['preparation_charge'] > 0): ?>
+                            <span class="text-brand-900 font-black">(+₹<?= number_format($item['preparation_charge']) ?>)</span>
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <!-- Included combo items preview -->
+                    <?php if (!empty($item['is_combo']) && !empty($item['combo_items'])): ?>
+                    <div class="text-[10px] text-gray-500 font-medium">
+                        Contains: <?php echo implode(', ', array_map(function($ci) {
+                            return (int)$ci['quantity'] . 'x ' . e($ci['product_name']);
+                        }, $item['combo_items'])); ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <p class="text-xs font-semibold text-gray-500">
+                        ₹<?= number_format($item['price'], 2) ?> <span class="text-gray-400 font-normal">each</span>
                     </p>
 
                     <!-- Stepper in Cart -->
-                    <div class="flex items-center gap-3 mt-3">
+                    <div class="flex items-center gap-3 pt-1">
                         <form action="/cart/update" method="POST" class="inline">
                             <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
-                            <input type="hidden" name="product_id" value="<?= $item['product_id'] ?>">
+                            <input type="hidden" name="item_key" value="<?= e($item['key']) ?>">
+                            <input type="hidden" name="product_id" value="<?= (int)($item['product_id'] ?? 0) ?>">
                             <input type="hidden" name="quantity" value="<?= $item['quantity'] - 1 ?>">
                             <button type="submit" class="w-7 h-7 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold flex items-center justify-center text-sm transition">
                                 -
                             </button>
                         </form>
 
-                        <span class="font-extrabold text-sm text-gray-900 w-4 text-center">
+                        <span class="font-extrabold text-sm text-gray-900 w-5 text-center">
                             <?= $item['quantity'] ?>
                         </span>
 
                         <form action="/cart/update" method="POST" class="inline">
                             <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
-                            <input type="hidden" name="product_id" value="<?= $item['product_id'] ?>">
+                            <input type="hidden" name="item_key" value="<?= e($item['key']) ?>">
+                            <input type="hidden" name="product_id" value="<?= (int)($item['product_id'] ?? 0) ?>">
                             <input type="hidden" name="quantity" value="<?= $item['quantity'] + 1 ?>">
                             <button 
                                 type="submit" 
@@ -134,7 +164,8 @@ $total = $totals['total'];
                 <!-- Delete Trash Icon (Top Right of Card) -->
                 <form action="/cart/remove" method="POST" class="absolute top-4 right-4">
                     <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
-                    <input type="hidden" name="product_id" value="<?= $item['product_id'] ?>">
+                    <input type="hidden" name="item_key" value="<?= e($item['key']) ?>">
+                    <input type="hidden" name="product_id" value="<?= (int)($item['product_id'] ?? 0) ?>">
                     <button type="submit" class="text-gray-400 hover:text-red-500 p-1 transition" title="Remove item">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -144,7 +175,7 @@ $total = $totals['total'];
 
                 <!-- Line Total (Bottom Right) -->
                 <div class="absolute bottom-4 right-4 text-right">
-                    <span class="font-extrabold text-base text-gray-900">₹<?= number_format($item['subtotal']) ?></span>
+                    <span class="font-black text-base text-gray-950">₹<?= number_format($item['subtotal'], 2) ?></span>
                 </div>
 
             </div>

@@ -1,165 +1,178 @@
 <?php
 /**
- * Admin Product & Inventory Management
+ * Admin Product & Catalog Management
  * N.A Fresh Fruits & Coconuts
  */
 $adminTitle = 'Product & Stock Management - N.A Fresh Fruits & Coconuts';
 $activeAdminTab = 'products';
 require_once __DIR__ . '/layout-header.php';
 
-$product = Product::getPrimary();
+$categoryId = isset($_GET['category']) && is_numeric($_GET['category']) ? (int)$_GET['category'] : null;
+$search = trim($_GET['q'] ?? '');
+
+$categories = Category::getAll(false);
+$products = Product::getAll(false, $categoryId, $search);
 ?>
 
-<div class="max-w-3xl mx-auto space-y-6">
-    
-    <div>
-        <h1 class="text-2xl font-black text-gray-900 tracking-tight">Product & Stock Management</h1>
-        <p class="text-xs text-gray-500">Update selling prices, inventory stock, and availability for Fresh Coconut Water</p>
-    </div>
+<div class="max-w-6xl mx-auto space-y-6">
 
-    <!-- Main Product Card -->
-    <div class="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-6">
-        
-        <div class="flex items-center gap-4 pb-4 border-b border-gray-100">
-            <div class="w-16 h-16 rounded-2xl bg-emerald-50 overflow-hidden border border-gray-100 shrink-0">
-                <img src="<?= e($product['image_url']) ?>" alt="<?= e($product['name']) ?>" class="w-full h-full object-cover">
-            </div>
-            <div>
-                <h2 class="text-lg font-bold text-gray-900"><?= e($product['name']) ?></h2>
-                <span class="text-xs text-gray-400"><?= e($product['tagline']) ?></span>
-                <div class="mt-1">
-                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase <?= $product['is_available'] ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200' ?>">
-                        <?= $product['is_available'] ? 'Active in Store' : 'Hidden from Customers' ?>
-                    </span>
-                </div>
-            </div>
+    <!-- Top Action Bar -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-black text-gray-900 tracking-tight">Products & Catalog</h1>
+            <p class="text-xs text-gray-500">Manage all products, categories, selling prices, stock and cutting options</p>
         </div>
 
-        <form action="/admin/products/update" method="POST" enctype="multipart/form-data" class="space-y-5 text-xs">
-            <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
-            <input type="hidden" name="product_id" value="<?= $product['id'] ?>">
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
-                <!-- Product Name -->
-                <div>
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Product Title</label>
-                    <input 
-                        type="text" 
-                        name="name" 
-                        value="<?= e($product['name']) ?>" 
-                        required 
-                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                    >
-                </div>
-
-                <!-- Tagline -->
-                <div>
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Tagline</label>
-                    <input 
-                        type="text" 
-                        name="tagline" 
-                        value="<?= e($product['tagline']) ?>" 
-                        required 
-                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                    >
-                </div>
-
-                <!-- Selling Price -->
-                <div>
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Selling Price (₹ per piece)</label>
-                    <div class="relative">
-                        <span class="absolute left-3 top-2.5 text-gray-500 font-bold">₹</span>
-                        <input 
-                            type="number" 
-                            step="1" 
-                            min="1" 
-                            name="price" 
-                            value="<?= (int)$product['price'] ?>" 
-                            required 
-                            class="w-full bg-gray-50 border border-gray-200 rounded-xl pl-7 pr-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                        >
-                    </div>
-                    <span class="text-[10px] text-gray-400 mt-1 block">Live pricing updated immediately in customer cart</span>
-                </div>
-
-                <!-- Stock Quantity -->
-                <div>
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Available Stock (Units)</label>
-                    <input 
-                        type="number" 
-                        min="0" 
-                        name="stock_quantity" 
-                        value="<?= (int)$product['stock_quantity'] ?>" 
-                        required 
-                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                    >
-                    <span class="text-[10px] text-gray-400 mt-1 block">Automatically decremented upon customer orders</span>
-                </div>
-
-                <!-- Is Available Switch -->
-                <div class="sm:col-span-2">
-                    <label class="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-xl cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            name="is_available" 
-                            value="1" 
-                            <?= $product['is_available'] ? 'checked' : '' ?>
-                            class="w-4 h-4 text-brand-600 rounded-sm focus:ring-brand-500"
-                        >
-                        <div>
-                            <span class="font-bold text-gray-900 block">Product Available for Sale</span>
-                            <span class="text-gray-400 text-[11px]">When unchecked, product shows as "Out of stock / Unavailable"</span>
-                        </div>
-                    </label>
-                </div>
-
-                <!-- Description -->
-                <div class="sm:col-span-2">
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Detailed Description</label>
-                    <textarea 
-                        name="description" 
-                        rows="3" 
-                        required 
-                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none leading-relaxed"
-                    ><?= e($product['description']) ?></textarea>
-                </div>
-
-                <!-- Image URL or Upload -->
-                <div class="sm:col-span-2">
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Primary Product Image Path</label>
-                    <input 
-                        type="text" 
-                        name="image_url" 
-                        value="<?= e($product['image_url']) ?>" 
-                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-mono focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                    >
-                </div>
-
-                <!-- File upload for replacement -->
-                <div class="sm:col-span-2">
-                    <label class="block font-bold text-gray-700 uppercase mb-1">Or Upload Replacement Photo</label>
-                    <input 
-                        type="file" 
-                        name="product_image" 
-                        accept="image/png,image/jpeg,image/webp" 
-                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs"
-                    >
-                    <span class="text-[10px] text-gray-400 mt-1 block">Accepts PNG, JPG, WEBP up to 5MB</span>
-                </div>
-
-            </div>
-
-            <div class="pt-4 border-t border-gray-100 flex justify-end">
-                <button type="submit" class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-3 px-6 rounded-xl shadow-xs transition">
-                    Save Product Changes
-                </button>
-            </div>
-
-        </form>
-
+        <div class="flex items-center gap-2">
+            <a href="/admin/categories" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-xs font-bold text-gray-700 shadow-2xs transition">
+                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+                <span>Categories</span>
+            </a>
+            <a href="/admin/combos" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-xs font-bold text-gray-700 shadow-2xs transition">
+                <svg class="w-4 h-4 text-brand-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                <span>Combos</span>
+            </a>
+            <a href="/admin/products/new" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
+                <span>Add Product</span>
+            </a>
+        </div>
     </div>
 
+    <!-- Filters & Search -->
+    <div class="bg-white rounded-2xl p-4 border border-gray-200/80 shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between">
+        <div class="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+            <a 
+                href="/admin/products" 
+                class="px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition <?= $categoryId === null ? 'bg-brand-600 text-white shadow-2xs' : 'bg-gray-100 text-gray-600 hover:bg-gray-200' ?>"
+            >
+                All Products (<?= count(Product::getAll(false)) ?>)
+            </a>
+            <?php foreach ($categories as $cat): ?>
+            <a 
+                href="/admin/products?category=<?= $cat['id'] ?>" 
+                class="px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition <?= $categoryId === (int)$cat['id'] ? 'bg-brand-600 text-white shadow-2xs' : 'bg-gray-100 text-gray-600 hover:bg-gray-200' ?>"
+            >
+                <?= e($cat['name']) ?> (<?= (int)$cat['product_count'] ?>)
+            </a>
+            <?php endforeach; ?>
+        </div>
+
+        <form action="/admin/products" method="GET" class="w-full sm:w-64">
+            <?php if ($categoryId): ?>
+                <input type="hidden" name="category" value="<?= $categoryId ?>">
+            <?php endif; ?>
+            <div class="relative">
+                <input 
+                    type="text" 
+                    name="q" 
+                    value="<?= e($search) ?>" 
+                    placeholder="Search catalog..." 
+                    class="w-full bg-gray-50 border border-gray-200 rounded-xl pl-9 pr-3 py-1.5 text-xs font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                >
+                <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            </div>
+        </form>
+    </div>
+
+    <!-- Products Table -->
+    <div class="bg-white rounded-2xl border border-gray-200/80 shadow-2xs overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+                <thead>
+                    <tr class="bg-gray-50/70 border-b border-gray-200 text-gray-500 uppercase tracking-wider font-bold">
+                        <th class="py-3 px-4">Product</th>
+                        <th class="py-3 px-3">Category</th>
+                        <th class="py-3 px-3">Selling Price</th>
+                        <th class="py-3 px-3">Stock</th>
+                        <th class="py-3 px-3">Cutting Options</th>
+                        <th class="py-3 px-3">Status</th>
+                        <th class="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-gray-700">
+                    <?php if (empty($products)): ?>
+                    <tr>
+                        <td colspan="7" class="py-8 text-center text-gray-400">
+                            No products found matching your search.
+                        </td>
+                    </tr>
+                    <?php else: ?>
+                    <?php foreach ($products as $p): ?>
+                    <tr class="hover:bg-gray-50/50 transition">
+                        <td class="py-3 px-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 rounded-xl bg-emerald-50 border border-gray-100 overflow-hidden shrink-0">
+                                    <img src="<?= e($p['image_url']) ?>" alt="<?= e($p['name']) ?>" class="w-full h-full object-cover">
+                                </div>
+                                <div class="min-w-0">
+                                    <span class="font-bold text-gray-900 block truncate"><?= e($p['name']) ?></span>
+                                    <span class="text-[11px] text-gray-400 truncate block"><?= e($p['tagline'] ?: 'No tagline') ?></span>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="py-3 px-3">
+                            <span class="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold text-[11px]">
+                                <?= e($p['category_name'] ?? 'Uncategorized') ?>
+                            </span>
+                        </td>
+                        <td class="py-3 px-3">
+                            <div class="flex items-baseline gap-1.5">
+                                <span class="font-black text-gray-950 text-sm">₹<?= number_format($p['price'], 2) ?></span>
+                                <?php if (!empty($p['original_price']) && (float)$p['original_price'] > (float)$p['price']): ?>
+                                <span class="line-through text-gray-400 text-[11px]">₹<?= number_format($p['original_price'], 2) ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td class="py-3 px-3">
+                            <span class="font-bold <?= (int)$p['stock_quantity'] > 10 ? 'text-gray-900' : ((int)$p['stock_quantity'] > 0 ? 'text-amber-600' : 'text-red-600') ?>">
+                                <?= (int)$p['stock_quantity'] ?> units
+                            </span>
+                        </td>
+                        <td class="py-3 px-3">
+                            <?php if (!empty($p['has_cutting_options']) && !empty($p['cutting_options'])): ?>
+                            <span class="inline-flex items-center gap-1 text-[11px] font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded-md border border-brand-200/50">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path></svg>
+                                <span><?= count($p['cutting_options']) ?> options</span>
+                            </span>
+                            <?php else: ?>
+                            <span class="text-gray-400 text-[11px]">Standard</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="py-3 px-3">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase <?= !empty($p['is_available']) ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200' ?>">
+                                <?= !empty($p['is_available']) ? 'Active' : 'Disabled' ?>
+                            </span>
+                        </td>
+                        <td class="py-3 px-4 text-right">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <a 
+                                    href="/admin/products/edit?id=<?= $p['id'] ?>" 
+                                    class="p-1.5 rounded-lg text-gray-500 hover:text-brand-600 hover:bg-gray-100 transition"
+                                    title="Edit Product"
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                </a>
+                                <form action="/admin/products/delete" method="POST" onsubmit="return confirm('Delete product \'<?= e($p['name']) ?>\'? This cannot be undone.');" class="inline">
+                                    <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
+                                    <input type="hidden" name="product_id" value="<?= $p['id'] ?>">
+                                    <button 
+                                        type="submit" 
+                                        class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                                        title="Delete Product"
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
 <?php require_once __DIR__ . '/layout-footer.php'; ?>

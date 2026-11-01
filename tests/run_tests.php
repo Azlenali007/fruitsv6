@@ -190,6 +190,14 @@ require_once __DIR__ . '/test_telegram_queue_worker.php';
 $passCount += $passed;
 $failCount += $failed;
 
+// ---------------------------------------------------------
+// 13. RAZORPAY PAYMENT FIX & MULTI-PRODUCT E-COMMERCE SUITE
+// ---------------------------------------------------------
+echo "\n";
+require_once __DIR__ . '/test_razorpay_multi_product.php';
+$passCount += $mpPass;
+$failCount += $mpFail;
+
 echo "\n========================================================\n";
 echo "OVERALL SYSTEM SUMMARY: {$passCount} PASSED, {$failCount} FAILED\n";
 echo "========================================================\n";

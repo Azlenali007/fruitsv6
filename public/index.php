@@ -102,7 +102,18 @@ try {
             break;
 
         case '/shop':
-            $product = Product::getPrimary();
+            $categories = Category::getAll(true);
+            $selectedCategory = isset($_GET['cat']) ? trim($_GET['cat']) : 'all';
+            $search = trim($_GET['q'] ?? '');
+            $catId = null;
+            if ($selectedCategory && $selectedCategory !== 'all' && $selectedCategory !== 'combos') {
+                $cObj = Category::getBySlug($selectedCategory);
+                if ($cObj) {
+                    $catId = (int)$cObj['id'];
+                }
+            }
+            $products = ($selectedCategory === 'combos') ? [] : Product::getAll(true, $catId, $search);
+            $combos = ($selectedCategory === 'all' || $selectedCategory === 'combos') ? Combo::getAll(true) : [];
             require __DIR__ . '/../app/views/shop.php';
             break;
 
@@ -112,18 +123,39 @@ try {
 
         case '/cart/add':
             if ($method === 'POST') {
+                $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') 
+                    || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'application/json'))
+                    || isset($_POST['is_ajax']);
+
                 if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    if ($isAjax) {
+                        json_response(['success' => false, 'error' => 'Session expired. Please reload and try again.'], 403);
+                    }
                     set_flash('error', 'Session expired. Please try again.');
                     header('Location: /shop');
                     exit;
                 }
-                $productId = (int)($_POST['product_id'] ?? 1);
+
+                $type = trim($_POST['type'] ?? 'product');
                 $qty = max(1, (int)($_POST['quantity'] ?? 1));
-                $res = CartService::addItem($productId, $qty);
+                $optionId = !empty($_POST['option_id']) ? trim($_POST['option_id']) : null;
+
+                if ($type === 'combo' || !empty($_POST['combo_id'])) {
+                    $comboId = (int)($_POST['combo_id'] ?? $_POST['id'] ?? 0);
+                    $res = CartService::addCombo($comboId, $qty);
+                } else {
+                    $productId = (int)($_POST['product_id'] ?? $_POST['id'] ?? 1);
+                    $res = CartService::addItem($productId, $qty, $optionId);
+                }
+
+                if ($isAjax) {
+                    json_response($res);
+                }
+
                 if (!$res['success']) {
                     set_flash('error', $res['error']);
                 } else {
-                    set_flash('success', 'Added fresh coconut water to your cart.');
+                    set_flash('success', 'Item added to your cart.');
                 }
                 header('Location: /cart');
                 exit;
@@ -133,13 +165,24 @@ try {
 
         case '/cart/update':
             if ($method === 'POST') {
+                $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') 
+                    || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'application/json'))
+                    || isset($_POST['is_ajax']);
+
                 if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    if ($isAjax) {
+                        json_response(['success' => false, 'error' => 'Security token expired.'], 403);
+                    }
                     header('Location: /cart');
                     exit;
                 }
-                $productId = (int)($_POST['product_id'] ?? 1);
+                $itemKey = trim($_POST['item_key'] ?? $_POST['product_id'] ?? '');
                 $qty = (int)($_POST['quantity'] ?? 1);
-                CartService::updateQuantity($productId, $qty);
+                $res = CartService::updateQuantity($itemKey, $qty);
+
+                if ($isAjax) {
+                    json_response($res);
+                }
                 header('Location: /cart');
                 exit;
             }
@@ -148,9 +191,16 @@ try {
 
         case '/cart/remove':
             if ($method === 'POST') {
+                $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') 
+                    || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'application/json'))
+                    || isset($_POST['is_ajax']);
+
                 if (verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
-                    $productId = (int)($_POST['product_id'] ?? 1);
-                    CartService::removeItem($productId);
+                    $itemKey = trim($_POST['item_key'] ?? $_POST['product_id'] ?? '');
+                    $res = CartService::removeItem($itemKey);
+                    if ($isAjax) {
+                        json_response($res);
+                    }
                     set_flash('info', 'Item removed from cart.');
                 }
             }
@@ -329,6 +379,16 @@ try {
                     json_response(['success' => false, 'error' => 'Order record not found.'], 404);
                 }
 
+                // Check if this payment was already successfully processed (Idempotent callback protection)
+                if ($tx['status'] === 'captured' && $order['payment_status'] === 'captured') {
+                    CartService::clear();
+                    json_response([
+                        'success' => true,
+                        'is_duplicate' => true,
+                        'redirect_url' => '/confirmation?num=' . urlencode($order['order_number']) . '&h=' . urlencode($order['tracking_hash'])
+                    ]);
+                }
+
                 // 2. Cryptographic Signature Verification (HMAC SHA256)
                 $isValidSignature = RazorpayService::verifyPaymentSignature($razorpayOrderId, $razorpayPaymentId, $razorpaySignature);
                 if (!$isValidSignature) {
@@ -350,17 +410,38 @@ try {
                     json_response(['success' => false, 'error' => 'Payment could not be verified with gateway.'], 400);
                 }
 
-                $payData = $fetchResult['payment'] ?? [];
+                $payData = $fetchResult['payment'] ?? $fetchResult['data'] ?? [];
                 $actualAmount = (int)($payData['amount'] ?? 0);
-                $actualCurrency = strtoupper($payData['currency'] ?? 'INR');
-                $expectedAmount = (int)round((float)$order['total_amount'] * 100);
+                $actualCurrency = strtoupper(trim((string)($payData['currency'] ?? 'INR')));
+                $expectedAmount = (int)$tx['amount_paise'] > 0 ? (int)$tx['amount_paise'] : (int)round((float)$order['total_amount'] * 100);
 
                 if ($actualCurrency !== 'INR' || $actualAmount !== $expectedAmount) {
                     PaymentTransaction::updateStatus((int)$tx['id'], 'failed', [
                         'gateway_payment_id' => $razorpayPaymentId,
                         'error_message' => "Amount/currency mismatch. Expected {$expectedAmount} INR, received {$actualAmount} {$actualCurrency}"
                     ]);
+                    // Secure logging: Never expose secret keys or sensitive customer credentials
+                    $maskedPayId = RazorpayService::maskSecret($razorpayPaymentId);
+                    error_log(sprintf(
+                        "[%s] [Razorpay Verification Error] Order: %s, Tx ID: %d, Expected: %d INR, Received: %d %s, Payment Ref: %s",
+                        date('Y-m-d H:i:s'),
+                        $order['order_number'] ?? 'N/A',
+                        $tx['id'] ?? 0,
+                        $expectedAmount,
+                        $actualAmount,
+                        $actualCurrency,
+                        $maskedPayId
+                    ));
                     json_response(['success' => false, 'error' => 'Payment amount or currency mismatch. Transaction rejected.'], 400);
+                }
+
+                // Auto-capture payment if authorized and not auto-captured by gateway
+                if (($payData['status'] ?? '') === 'authorized' && empty($payData['captured'])) {
+                    $capRes = RazorpayService::capturePayment($razorpayPaymentId, $expectedAmount, 'INR');
+                    if ($capRes['success']) {
+                        $payData['status'] = 'captured';
+                        $payData['captured'] = true;
+                    }
                 }
 
                 // 4. Update Transaction, Confirm Order, and Clear Cart
@@ -802,6 +883,76 @@ try {
             require __DIR__ . '/../app/views/admin/products.php';
             break;
 
+        case '/admin/products/new':
+            AuthService::requireAdmin();
+            $product = null;
+            require __DIR__ . '/../app/views/admin/product-form.php';
+            break;
+
+        case '/admin/products/edit':
+            AuthService::requireAdmin();
+            $productId = (int)($_GET['id'] ?? 0);
+            $product = Product::getById($productId);
+            if (!$product) {
+                set_flash('error', 'Product not found.');
+                header('Location: /admin/products');
+                exit;
+            }
+            require __DIR__ . '/../app/views/admin/product-form.php';
+            break;
+
+        case '/admin/products/create':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token mismatch.');
+                    header('Location: /admin/products');
+                    exit;
+                }
+
+                $imageUrl = trim($_POST['image_url'] ?? '/assets/images/product-main.png');
+                if (!empty($_FILES['product_image']['name']) && $_FILES['product_image']['error'] === UPLOAD_ERR_OK) {
+                    $fileTmp = $_FILES['product_image']['tmp_name'];
+                    $fileSize = $_FILES['product_image']['size'];
+                    if ($fileSize <= MAX_UPLOAD_SIZE) {
+                        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                        $mime = finfo_file($finfo, $fileTmp);
+                        finfo_close($finfo);
+                        $mimeToExt = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+                        if (isset($mimeToExt[$mime])) {
+                            $ext = $mimeToExt[$mime];
+                            $safeName = 'product_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                            if (move_uploaded_file($fileTmp, UPLOAD_DIR . $safeName)) {
+                                $imageUrl = '/assets/uploads/' . $safeName;
+                            }
+                        }
+                    }
+                }
+
+                $createData = [
+                    'category_id' => !empty($_POST['category_id']) ? (int)$_POST['category_id'] : null,
+                    'name' => trim($_POST['name'] ?? ''),
+                    'slug' => trim($_POST['slug'] ?? ''),
+                    'tagline' => trim($_POST['tagline'] ?? ''),
+                    'description' => trim($_POST['description'] ?? ''),
+                    'price' => max(0.0, (float)($_POST['price'] ?? 0)),
+                    'original_price' => !empty($_POST['original_price']) ? (float)$_POST['original_price'] : null,
+                    'stock_quantity' => max(0, (int)($_POST['stock_quantity'] ?? 0)),
+                    'is_available' => isset($_POST['is_available']) ? 1 : 0,
+                    'is_featured' => isset($_POST['is_featured']) ? 1 : 0,
+                    'has_cutting_options' => isset($_POST['has_cutting_options']) ? 1 : 0,
+                    'cutting_options_json' => !empty($_POST['cutting_options_json']) ? $_POST['cutting_options_json'] : null,
+                    'image_url' => $imageUrl
+                ];
+
+                Product::create($createData);
+                set_flash('success', 'Product created successfully in MySQL.');
+                header('Location: /admin/products');
+                exit;
+            }
+            header('Location: /admin/products');
+            break;
+
         case '/admin/products/update':
             AuthService::requireAdmin();
             if ($method === 'POST') {
@@ -812,18 +963,11 @@ try {
                 }
 
                 $productId = (int)($_POST['product_id'] ?? 1);
-                $name = trim($_POST['name'] ?? '');
-                $tagline = trim($_POST['tagline'] ?? '');
-                $description = trim($_POST['description'] ?? '');
-                $price = max(1.0, (float)($_POST['price'] ?? 40.0));
-                $stock = max(0, (int)($_POST['stock_quantity'] ?? 0));
-                $isAvailable = isset($_POST['is_available']) ? 1 : 0;
                 $imageUrl = trim($_POST['image_url'] ?? '/assets/images/product-main.png');
 
                 // Handle image upload if provided
                 if (!empty($_FILES['product_image']['name']) && $_FILES['product_image']['error'] === UPLOAD_ERR_OK) {
                     $fileTmp = $_FILES['product_image']['tmp_name'];
-                    $fileName = $_FILES['product_image']['name'];
                     $fileSize = $_FILES['product_image']['size'];
 
                     if ($fileSize <= MAX_UPLOAD_SIZE) {
@@ -831,16 +975,11 @@ try {
                         $mime = finfo_file($finfo, $fileTmp);
                         finfo_close($finfo);
 
-                        $mimeToExt = [
-                            'image/jpeg' => 'jpg',
-                            'image/png'  => 'png',
-                            'image/webp' => 'webp',
-                        ];
+                        $mimeToExt = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
                         if (isset($mimeToExt[$mime])) {
                             $ext = $mimeToExt[$mime];
                             $safeName = 'product_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                            $destination = UPLOAD_DIR . $safeName;
-                            if (move_uploaded_file($fileTmp, $destination)) {
+                            if (move_uploaded_file($fileTmp, UPLOAD_DIR . $safeName)) {
                                 $imageUrl = '/assets/uploads/' . $safeName;
                             }
                         }
@@ -848,12 +987,18 @@ try {
                 }
 
                 $updateData = [
-                    'name' => $name,
-                    'tagline' => $tagline,
-                    'description' => $description,
-                    'price' => $price,
-                    'stock_quantity' => $stock,
-                    'is_available' => $isAvailable,
+                    'category_id' => !empty($_POST['category_id']) ? (int)$_POST['category_id'] : null,
+                    'name' => trim($_POST['name'] ?? ''),
+                    'slug' => trim($_POST['slug'] ?? ''),
+                    'tagline' => trim($_POST['tagline'] ?? ''),
+                    'description' => trim($_POST['description'] ?? ''),
+                    'price' => max(0.0, (float)($_POST['price'] ?? 0)),
+                    'original_price' => !empty($_POST['original_price']) ? (float)$_POST['original_price'] : null,
+                    'stock_quantity' => max(0, (int)($_POST['stock_quantity'] ?? 0)),
+                    'is_available' => isset($_POST['is_available']) ? 1 : 0,
+                    'is_featured' => isset($_POST['is_featured']) ? 1 : 0,
+                    'has_cutting_options' => isset($_POST['has_cutting_options']) ? 1 : 0,
+                    'cutting_options_json' => !empty($_POST['cutting_options_json']) ? $_POST['cutting_options_json'] : null,
                     'image_url' => $imageUrl
                 ];
 
@@ -863,6 +1008,168 @@ try {
                 exit;
             }
             header('Location: /admin/products');
+            break;
+
+        case '/admin/products/delete':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    $prodId = (int)($_POST['product_id'] ?? 0);
+                    if ($prodId > 0) {
+                        Product::delete($prodId);
+                        set_flash('info', 'Product removed from catalog.');
+                    }
+                }
+            }
+            header('Location: /admin/products');
+            break;
+
+        // Categories Management
+        case '/admin/categories':
+            AuthService::requireAdmin();
+            require __DIR__ . '/../app/views/admin/categories.php';
+            break;
+
+        case '/admin/categories/save':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token mismatch.');
+                    header('Location: /admin/categories');
+                    exit;
+                }
+
+                $catId = !empty($_POST['category_id']) ? (int)$_POST['category_id'] : 0;
+                $data = [
+                    'name' => trim($_POST['name'] ?? ''),
+                    'slug' => trim($_POST['slug'] ?? ''),
+                    'description' => trim($_POST['description'] ?? ''),
+                    'sort_order' => (int)($_POST['sort_order'] ?? 0),
+                    'is_active' => isset($_POST['is_active']) ? 1 : 0
+                ];
+
+                if ($catId > 0) {
+                    Category::update($catId, $data);
+                    set_flash('success', 'Category updated successfully.');
+                } else {
+                    Category::create($data);
+                    set_flash('success', 'New category created.');
+                }
+            }
+            header('Location: /admin/categories');
+            break;
+
+        case '/admin/categories/delete':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    $catId = (int)($_POST['category_id'] ?? 0);
+                    if ($catId > 0) {
+                        Category::delete($catId);
+                        set_flash('info', 'Category removed.');
+                    }
+                }
+            }
+            header('Location: /admin/categories');
+            break;
+
+        // Combo Offers & Bundles Management
+        case '/admin/combos':
+            AuthService::requireAdmin();
+            require __DIR__ . '/../app/views/admin/combos.php';
+            break;
+
+        case '/admin/combos/new':
+            AuthService::requireAdmin();
+            $combo = null;
+            require __DIR__ . '/../app/views/admin/combo-form.php';
+            break;
+
+        case '/admin/combos/edit':
+            AuthService::requireAdmin();
+            $comboId = (int)($_GET['id'] ?? 0);
+            $combo = Combo::getById($comboId);
+            if (!$combo) {
+                set_flash('error', 'Combo not found.');
+                header('Location: /admin/combos');
+                exit;
+            }
+            require __DIR__ . '/../app/views/admin/combo-form.php';
+            break;
+
+        case '/admin/combos/create':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token mismatch.');
+                    header('Location: /admin/combos');
+                    exit;
+                }
+
+                $items = !empty($_POST['items_json']) ? json_decode($_POST['items_json'], true) : [];
+                $comboData = [
+                    'name' => trim($_POST['name'] ?? ''),
+                    'slug' => trim($_POST['slug'] ?? ''),
+                    'tagline' => trim($_POST['tagline'] ?? ''),
+                    'description' => trim($_POST['description'] ?? ''),
+                    'price' => max(0.0, (float)($_POST['price'] ?? 0)),
+                    'original_price' => max(0.0, (float)($_POST['original_price'] ?? 0)),
+                    'image_url' => trim($_POST['image_url'] ?? '/assets/images/hero-coconut.png'),
+                    'stock_quantity' => max(0, (int)($_POST['stock_quantity'] ?? 50)),
+                    'is_available' => isset($_POST['is_available']) ? 1 : 0
+                ];
+
+                Combo::create($comboData, is_array($items) ? $items : []);
+                set_flash('success', 'Combo offer created successfully.');
+                header('Location: /admin/combos');
+                exit;
+            }
+            header('Location: /admin/combos');
+            break;
+
+        case '/admin/combos/update':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token mismatch.');
+                    header('Location: /admin/combos');
+                    exit;
+                }
+
+                $comboId = (int)($_POST['combo_id'] ?? 0);
+                $items = !empty($_POST['items_json']) ? json_decode($_POST['items_json'], true) : [];
+                $comboData = [
+                    'name' => trim($_POST['name'] ?? ''),
+                    'slug' => trim($_POST['slug'] ?? ''),
+                    'tagline' => trim($_POST['tagline'] ?? ''),
+                    'description' => trim($_POST['description'] ?? ''),
+                    'price' => max(0.0, (float)($_POST['price'] ?? 0)),
+                    'original_price' => max(0.0, (float)($_POST['original_price'] ?? 0)),
+                    'image_url' => trim($_POST['image_url'] ?? '/assets/images/hero-coconut.png'),
+                    'stock_quantity' => max(0, (int)($_POST['stock_quantity'] ?? 50)),
+                    'is_available' => isset($_POST['is_available']) ? 1 : 0
+                ];
+
+                Combo::update($comboId, $comboData, is_array($items) ? $items : []);
+                set_flash('success', 'Combo offer updated successfully.');
+                header('Location: /admin/combos');
+                exit;
+            }
+            header('Location: /admin/combos');
+            break;
+
+        case '/admin/combos/delete':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    $comboId = (int)($_POST['combo_id'] ?? 0);
+                    if ($comboId > 0) {
+                        Combo::delete($comboId);
+                        set_flash('info', 'Combo offer deleted.');
+                    }
+                }
+            }
+            header('Location: /admin/combos');
             break;
 
         // ------------------------------------------------
