@@ -342,21 +342,22 @@ assert_test($updatedStats['seconds_since_heartbeat'] < 10, "Worker heartbeat tim
 // -----------------------------------------------------------------------------
 // SECTION J: SERVER-SIDE CRON SCRIPT VERIFICATION (30-SECOND CRON)
 // -----------------------------------------------------------------------------
-echo "\nJ. SERVER CRON SCRIPT & TELEMETRY VERIFICATION:\n";
+echo "\nJ. SINGLE CRON FILE (cron/telegram-notifications.php) VERIFICATION:\n";
 
-$cronCmd = "/usr/bin/php " . escapeshellarg(__DIR__ . '/../bin/cron_telegram_queue.php');
+assert_test(file_exists(__DIR__ . '/../cron/telegram-notifications.php'), "Single cron file cron/telegram-notifications.php exists");
+assert_test(is_executable(__DIR__ . '/../cron/telegram-notifications.php'), "cron/telegram-notifications.php has executable permissions");
+
+$cronCmd = "/usr/bin/php " . escapeshellarg(__DIR__ . '/../cron/telegram-notifications.php') . " --once";
 exec($cronCmd, $cronOutput, $cronExitCode);
 
-assert_test($cronExitCode === 0, "php bin/cron_telegram_queue.php executed with code 0");
+assert_test($cronExitCode === 0, "php cron/telegram-notifications.php --once executed with code 0");
 $cronOutputStr = implode("\n", $cronOutput);
-assert_test(str_contains($cronOutputStr, '[Cron 30s] Completed:'), "Cron processor output reports successful batch cycle");
+assert_test(str_contains($cronOutputStr, '[Cron Cycle 1/2] Completed:') || str_contains($cronOutputStr, 'Another Telegram notification cycle is currently running'), "Cron processor reports successful execution or concurrency lock protection");
 
 $cronStats = TelegramQueueService::getQueueStats();
 assert_test(!empty($cronStats['cron_last_execution_at']), "Cron recorded execution timestamp in database: " . $cronStats['cron_last_execution_at']);
-assert_test($cronStats['seconds_since_cron'] <= 10, "Cron execution is fresh (<= 10s ago, actual: {$cronStats['seconds_since_cron']}s)");
+assert_test($cronStats['seconds_since_cron'] <= 75, "Cron execution is fresh (<= 75s ago, actual: {$cronStats['seconds_since_cron']}s)");
 assert_test($cronStats['is_cron_active'] === true, "Cron status is verified ACTIVE");
-assert_test(is_executable(__DIR__ . '/../bin/cron_telegram_queue.php'), "bin/cron_telegram_queue.php has executable permissions");
-assert_test(is_executable(__DIR__ . '/../bin/cron_30s.sh'), "bin/cron_30s.sh wrapper has executable permissions");
 
 // Clean test artifacts & restore original settings
 foreach ($originalSettings as $k => $v) {

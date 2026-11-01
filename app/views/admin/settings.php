@@ -517,7 +517,7 @@ $settings = Setting::getAll();
                         });
                 },
                 copyCronCommands() {
-                    const cmd = '* * * * * /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1\n* * * * * sleep 30 && /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1';
+                    const cmd = '* * * * * /usr/bin/php /app/applet/cron/telegram-notifications.php >> /app/applet/storage/logs/telegram_cron.log 2>&1';
                     if (navigator.clipboard) {
                         navigator.clipboard.writeText(cmd).then(() => {
                             this.copiedCron = true;
@@ -587,22 +587,21 @@ $settings = Setting::getAll();
                     <div class="flex items-center justify-between gap-2 mb-2">
                         <div class="flex items-center gap-1.5 font-bold text-slate-300 text-[11px]">
                             <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                            <span>Server Crontab Setup (cPanel, DirectAdmin, or Linux Server)</span>
+                            <span>Single Server Crontab Entry (cPanel, DirectAdmin, or Linux Server)</span>
                         </div>
                         <button 
                             type="button" 
                             @click="copyCronCommands()"
                             class="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold px-2.5 py-1 rounded-lg text-[10px] transition cursor-pointer flex items-center gap-1"
                         >
-                            <span x-show="!copiedCron">📋 Copy Cron Commands</span>
+                            <span x-show="!copiedCron">📋 Copy Cron Command</span>
                             <span x-show="copiedCron" class="text-emerald-400">✓ Copied to Clipboard!</span>
                         </button>
                     </div>
                     <p class="text-[10px] text-slate-400 mb-2">
-                        Runs non-stop 24/7 in the background without opening the website or Admin Panel. The two scheduled executions per minute achieve exact 30-second processing:
+                        Only ONE Cron Job entry is required. The script executes automatically every minute and performs two processing cycles 30 seconds apart:
                     </p>
-                    <pre class="bg-black/50 p-2.5 rounded-xl text-[10px] font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed select-all border border-slate-800">* * * * * /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1
-* * * * * sleep 30 && /usr/bin/php /app/applet/bin/cron_telegram_queue.php >> /app/applet/storage/logs/telegram_cron.log 2>&1</pre>
+                    <pre class="bg-black/50 p-2.5 rounded-xl text-[10px] font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed select-all border border-slate-800">* * * * * /usr/bin/php /app/applet/cron/telegram-notifications.php >> /app/applet/storage/logs/telegram_cron.log 2>&1</pre>
                 </div>
 
                 <!-- Action buttons -->
