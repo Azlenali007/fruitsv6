@@ -11,11 +11,13 @@ class Product {
         $pdo = Database::getConnection();
         $stmt = $pdo->query("SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM `products` p LEFT JOIN `categories` c ON c.id = p.category_id WHERE p.`slug` = 'fresh-coconut-water' LIMIT 1");
         $prod = $stmt->fetch();
+        $stmt->closeCursor();
         if (!$prod) {
             $stmt2 = $pdo->query("SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM `products` p LEFT JOIN `categories` c ON c.id = p.category_id ORDER BY p.`sort_order` ASC, p.`id` ASC LIMIT 1");
             $prod = $stmt2->fetch();
+            $stmt2->closeCursor();
         }
-        return self::formatProduct($prod);
+        return self::formatProduct($prod ?: null);
     }
 
     public static function getById(int $id): ?array {
@@ -23,7 +25,8 @@ class Product {
         $stmt = $pdo->prepare("SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM `products` p LEFT JOIN `categories` c ON c.id = p.category_id WHERE p.`id` = ? LIMIT 1");
         $stmt->execute([$id]);
         $prod = $stmt->fetch();
-        return self::formatProduct($prod);
+        $stmt->closeCursor();
+        return self::formatProduct($prod ?: null);
     }
 
     public static function getBySlug(string $slug): ?array {
@@ -31,7 +34,8 @@ class Product {
         $stmt = $pdo->prepare("SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM `products` p LEFT JOIN `categories` c ON c.id = p.category_id WHERE p.`slug` = ? LIMIT 1");
         $stmt->execute([$slug]);
         $prod = $stmt->fetch();
-        return self::formatProduct($prod);
+        $stmt->closeCursor();
+        return self::formatProduct($prod ?: null);
     }
 
     public static function getAll(bool $activeOnly = false, ?int $categoryId = null, ?string $search = null): array {
@@ -191,8 +195,8 @@ class Product {
         ];
     }
 
-    private static function formatProduct(?array $prod): ?array {
-        if (!$prod) {
+    private static function formatProduct(array|bool|null $prod): ?array {
+        if (!$prod || !is_array($prod)) {
             return null;
         }
         if (!empty($prod['gallery_json'])) {

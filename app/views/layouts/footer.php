@@ -208,5 +208,52 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
 })();
 </script>
 
+<!-- PWA Mobile Install Floating Prompt Banner -->
+<div id="pwa-install-banner" class="hidden fixed bottom-20 left-4 right-4 md:left-auto md:right-6 md:bottom-6 max-w-md bg-white border border-emerald-100 rounded-2xl shadow-2xl p-4 z-50 flex items-center gap-3.5 animate-bounce-subtle">
+    <img src="/assets/images/icons/icon-192.png" alt="App Icon" class="w-12 h-12 rounded-xl object-cover shrink-0 shadow-xs">
+    <div class="flex-1 min-w-0">
+        <h4 class="text-sm font-bold text-gray-900 leading-tight">Install N.A Fruits App</h4>
+        <p class="text-xs text-gray-500 truncate mt-0.5">Instant order tracking & push notifications</p>
+    </div>
+    <div class="flex items-center gap-1.5 shrink-0">
+        <button type="button" onclick="window.NA_PWA.promptInstall()" class="bg-[#235d3a] hover:bg-[#1b4a2e] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition">
+            Install
+        </button>
+        <button type="button" onclick="window.NA_PWA.hideInstallBanner()" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg" title="Dismiss">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+    </div>
+</div>
+
+<!-- iOS 16.4+ Safari Add to Home Screen Instructions Modal -->
+<div id="ios-install-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl border border-gray-100 text-left">
+        <div class="flex items-center gap-3 mb-4">
+            <img src="/assets/images/icons/icon-192.png" alt="Logo" class="w-12 h-12 rounded-xl shadow-xs">
+            <div>
+                <h3 class="text-base font-bold text-gray-900">Install on iPhone / iPad</h3>
+                <p class="text-xs text-gray-500">Enable real-time push notifications</p>
+            </div>
+        </div>
+        <div class="space-y-3 text-xs text-gray-600 bg-gray-50 p-3.5 rounded-xl border border-gray-100">
+            <div class="flex items-start gap-2.5">
+                <span class="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-[#235d3a] font-bold text-[11px] shrink-0 mt-0.5">1</span>
+                <span>Tap the <strong class="text-gray-800">Share</strong> icon <svg class="inline w-4 h-4 text-blue-600 mx-0.5 align-text-bottom" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12"></path></svg> in Safari's bottom toolbar.</span>
+            </div>
+            <div class="flex items-start gap-2.5">
+                <span class="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-[#235d3a] font-bold text-[11px] shrink-0 mt-0.5">2</span>
+                <span>Scroll down and tap <strong class="text-gray-800">Add to Home Screen</strong> <svg class="inline w-4 h-4 text-gray-700 mx-0.5 align-text-bottom" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>.</span>
+            </div>
+            <div class="flex items-start gap-2.5">
+                <span class="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-[#235d3a] font-bold text-[11px] shrink-0 mt-0.5">3</span>
+                <span>Launch the <strong class="text-gray-800">N.A Fruits</strong> app from your Home Screen to receive instant order alerts!</span>
+            </div>
+        </div>
+        <button type="button" onclick="window.NA_PWA.hideIosInstallModal()" class="mt-4 w-full rounded-xl bg-[#235d3a] hover:bg-[#1b4a2e] py-2.5 text-xs font-bold text-white shadow-xs transition">
+            Got It
+        </button>
+    </div>
+</div>
+
 </body>
 </html>

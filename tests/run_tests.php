@@ -183,12 +183,12 @@ $passCount += $invPass;
 $failCount += $invFail;
 
 // ---------------------------------------------------------
-// 12. TELEGRAM QUEUE & 30-SECOND WORKER TEST SUITE
+// 12. PWA & WEB PUSH NOTIFICATIONS TEST SUITE
 // ---------------------------------------------------------
 echo "\n";
-require_once __DIR__ . '/test_telegram_queue_worker.php';
-$passCount += $passed;
-$failCount += $failed;
+require_once __DIR__ . '/test_pwa_web_push.php';
+$passCount += $pwaPass;
+$failCount += $pwaFail;
 
 // ---------------------------------------------------------
 // 13. RAZORPAY PAYMENT FIX & MULTI-PRODUCT E-COMMERCE SUITE

@@ -17,6 +17,9 @@ foreach ($orders as $o) {
         $totalSpent += (float)$o['total_amount'];
     }
 }
+$notifPrefs = NotificationService::getCustomerPreferences($customerId);
+$orderUpdatesEnabled = !empty($notifPrefs['order_updates']);
+$promotionsEnabled = !empty($notifPrefs['promotions']);
 ?>
 
 <div class="max-w-4xl mx-auto px-4 py-8 sm:py-10 space-y-8">
@@ -153,6 +156,73 @@ foreach ($orders as $o) {
                     </button>
                 </div>
             </form>
+
+            <!-- Push Notifications & Preferences Card -->
+            <div class="border-t border-gray-100 pt-5 space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <div class="w-7 h-7 rounded-lg bg-emerald-50 text-brand-600 flex items-center justify-center">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                        </div>
+                        <h3 class="text-xs font-bold text-gray-900 uppercase tracking-wider">Web Push Notifications</h3>
+                    </div>
+                    <span id="pwa-push-status" class="text-[10px] text-gray-400 font-medium">Checking...</span>
+                </div>
+
+                <p class="text-xs text-gray-500 leading-relaxed">
+                    Receive instant real-time alerts directly on this phone or computer when your order is confirmed, prepared, out for delivery, and delivered.
+                </p>
+
+                <!-- Push Device Subscription Toggle Button -->
+                <button 
+                    type="button" 
+                    id="pwa-push-toggle-btn"
+                    onclick="if (window.NA_PWA && window.NA_PWA.isSubscribed) { window.NA_PWA.unsubscribeDevice(); } else if (window.NA_PWA) { window.NA_PWA.subscribeDevice('customer'); }"
+                    class="w-full bg-emerald-50 hover:bg-emerald-100 text-[#235d3a] border border-emerald-200 font-bold py-2 px-3 rounded-xl transition text-xs flex items-center justify-center gap-2"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                    <span>Enable Instant Push Notifications</span>
+                </button>
+
+                <!-- Customer Topic Preferences Form -->
+                <form action="/account/notifications/preferences" method="POST" class="space-y-3 pt-2 border-t border-gray-100">
+                    <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
+                    
+                    <div class="flex items-start gap-2.5">
+                        <input 
+                            type="checkbox" 
+                            id="order_updates" 
+                            name="order_updates" 
+                            value="1" 
+                            <?= $orderUpdatesEnabled ? 'checked' : '' ?>
+                            class="mt-0.5 rounded text-brand-600 focus:ring-brand-500 h-4 w-4 border-gray-300"
+                        >
+                        <label for="order_updates" class="text-xs text-gray-700 cursor-pointer">
+                            <strong class="font-semibold text-gray-900 block">Order Status Updates</strong>
+                            Instant alerts when order is placed, dispatched and delivered.
+                        </label>
+                    </div>
+
+                    <div class="flex items-start gap-2.5">
+                        <input 
+                            type="checkbox" 
+                            id="promotions" 
+                            name="promotions" 
+                            value="1" 
+                            <?= $promotionsEnabled ? 'checked' : '' ?>
+                            class="mt-0.5 rounded text-brand-600 focus:ring-brand-500 h-4 w-4 border-gray-300"
+                        >
+                        <label for="promotions" class="text-xs text-gray-700 cursor-pointer">
+                            <strong class="font-semibold text-gray-900 block">Fresh Harvest & Special Offers</strong>
+                            Early access to fresh coconut batches and combo savings.
+                        </label>
+                    </div>
+
+                    <button type="submit" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 px-3 rounded-xl transition text-xs">
+                        Save Preferences
+                    </button>
+                </form>
+            </div>
         </div>
 
         <!-- Right: Recent Orders List -->

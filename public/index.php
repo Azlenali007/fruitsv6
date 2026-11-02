@@ -531,8 +531,9 @@ try {
                 $updatedOrder = Order::getById((int)$order['id']);
                 Invoice::createForOrder($updatedOrder, $razorpayPaymentId);
 
-                // Enqueue future Telegram order notification asynchronously (post-commit, non-blocking)
-                TelegramService::enqueueOrderNotification((int)$order['id'], 'order_paid');
+                // Instant PWA Web Push notification to admins and customer
+                NotificationService::sendNewOrderToAdmins((int)$order['id']);
+                NotificationService::sendOrderStatusToCustomer((int)$order['id'], 'payment_confirmed');
 
                 CartService::clear();
 
@@ -587,7 +588,8 @@ try {
                             ]);
                             $updatedOrder = Order::getById((int)$order['id']);
                             Invoice::createForOrder($updatedOrder, $gatewayPaymentId);
-                            TelegramService::enqueueOrderNotification((int)$order['id'], 'order_paid');
+                            NotificationService::sendNewOrderToAdmins((int)$order['id']);
+                            NotificationService::sendOrderStatusToCustomer((int)$order['id'], 'payment_confirmed');
 
                             $tx = PaymentTransaction::getByGatewayOrderId($gatewayOrderId);
                             if ($tx) {
@@ -910,7 +912,18 @@ try {
 
                 $success = Order::updateStatus($orderId, $newStatus, $comment, $changedBy);
                 if ($success) {
-                    set_flash('success', "Order #$orderId updated to " . ucfirst($newStatus) . ".");
+                    $statusEventMap = [
+                        'confirmed' => 'order_confirmed',
+                        'preparing' => 'being_prepared',
+                        'ready' => 'order_ready',
+                        'out_for_delivery' => 'out_for_delivery',
+                        'delivered' => 'order_delivered',
+                        'cancelled' => 'order_cancelled'
+                    ];
+                    if (isset($statusEventMap[$newStatus])) {
+                        NotificationService::sendOrderStatusToCustomer($orderId, $statusEventMap[$newStatus]);
+                    }
+                    set_flash('success', "Order #$orderId updated to " . ucfirst(str_replace('_', ' ', $newStatus)) . ".");
                 } else {
                     set_flash('error', 'Failed to update order status.');
                 }
@@ -1420,70 +1433,173 @@ try {
                     'whatsapp_popup_frequency' => in_array($_POST['whatsapp_popup_frequency'] ?? '', ['session', 'daily', 'weekly', 'always']) ? $_POST['whatsapp_popup_frequency'] : 'session',
                 ];
 
-                $submittedTgToken = trim($_POST['telegram_bot_token'] ?? '');
-                $existingTgToken = Setting::get('telegram_bot_token', '');
-                $finalTgToken = ($submittedTgToken !== '') ? $submittedTgToken : $existingTgToken;
-
-                $settingsData['telegram_notifications_enabled'] = isset($_POST['telegram_notifications_enabled']) ? '1' : '0';
-                $settingsData['telegram_bot_token'] = $finalTgToken;
-                $settingsData['telegram_chat_id'] = trim($_POST['telegram_chat_id'] ?? '');
-                $settingsData['telegram_send_on_cod'] = isset($_POST['telegram_send_on_cod']) ? '1' : '0';
-                $settingsData['telegram_send_on_online_paid'] = isset($_POST['telegram_send_on_online_paid']) ? '1' : '0';
+                $settingsData['pwa_push_enabled'] = isset($_POST['pwa_push_enabled']) ? '1' : '0';
+                $settingsData['pwa_admin_order_alerts'] = isset($_POST['pwa_admin_order_alerts']) ? '1' : '0';
+                $settingsData['pwa_customer_order_alerts'] = isset($_POST['pwa_customer_order_alerts']) ? '1' : '0';
 
                 Setting::setMany($settingsData);
-                set_flash('success', 'Store delivery, business, and notification settings successfully saved.');
+                set_flash('success', 'Store delivery, business, and PWA notification settings successfully saved.');
                 header('Location: /admin/settings');
                 exit;
             }
             header('Location: /admin/settings');
             break;
 
-        case '/admin/settings/telegram/test':
+        // ------------------------------------------------
+        // PWA Web Push Notification Routes
+        // ------------------------------------------------
+        case '/admin/notifications':
+            AuthService::requireAdmin();
+            require __DIR__ . '/../app/views/admin/notifications.php';
+            break;
+
+        case '/admin/notifications/send':
             AuthService::requireAdmin();
             if ($method === 'POST') {
-                $token = trim($_POST['token'] ?? '');
-                $chatId = trim($_POST['chat_id'] ?? '');
-                $res = TelegramService::sendTestMessage($token, $chatId);
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $input['_csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'Security token invalid or expired.'], 403);
+                }
+
+                $audience = trim($input['audience'] ?? 'all_customers');
+                $notifType = trim($input['type'] ?? 'promo');
+
+                // Enforce Superadmin permission for bulk promotional notifications
+                $admin = AuthService::user();
+                if ($audience === 'all_customers' && $notifType === 'promo' && ($admin['role'] ?? '') !== 'superadmin') {
+                    json_response(['success' => false, 'error' => 'Only Superadmins can broadcast bulk promotional notifications.'], 403);
+                }
+
+                $targetCust = $input['customer_id'] ?? null;
+                $res = NotificationService::sendBroadcast([
+                    'title' => $input['title'] ?? '',
+                    'body' => $input['body'] ?? '',
+                    'image' => $input['image'] ?? null,
+                    'url' => $input['url'] ?? '/',
+                    'type' => $notifType
+                ], $audience, $targetCust, (int)($admin['id'] ?? 0));
+
                 json_response($res);
             }
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
-        case '/admin/telegram/worker/run':
+        case '/admin/notifications/test-admin':
             AuthService::requireAdmin();
             if ($method === 'POST') {
-                $batchSize = isset($_POST['batch']) ? (int)$_POST['batch'] : 10;
-                $summary = TelegramQueueService::processBatch($batchSize);
-                $stats = TelegramQueueService::getQueueStats();
+                $pdo = Database::getConnection();
+                $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'admin'");
+                $adminSubs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $stmt->closeCursor();
+
+                if (empty($adminSubs)) {
+                    json_response(['success' => false, 'error' => 'No admin devices currently enrolled. Click "Enrol Current Admin Device" first.'], 400);
+                }
+
+                $sent = 0;
+                $failed = 0;
+                $testPayload = [
+                    'title' => 'Admin Push Test Alert 🥥',
+                    'body' => 'Web Push notification is active and communicating with your device!',
+                    'icon' => '/assets/images/icons/icon-192.png',
+                    'badge' => '/assets/images/icons/badge-72.png',
+                    'tag' => 'admin-test-' . time(),
+                    'data' => ['url' => '/admin/notifications']
+                ];
+
+                foreach ($adminSubs as $sub) {
+                    $res = WebPushService::sendNotification($sub, $testPayload);
+                    if ($res['success']) {
+                        $sent++;
+                    } else {
+                        $failed++;
+                        if (!empty($res['expired'])) {
+                            NotificationService::removeSubscriptionById((int)$sub['id']);
+                        }
+                    }
+                }
+
                 json_response([
                     'success' => true,
-                    'summary' => $summary,
-                    'stats' => $stats,
-                    'message' => "Worker cycle executed: {$summary['claimed']} processed ({$summary['sent']} sent, {$summary['retrying']} scheduled for retry, {$summary['failed']} failed, {$summary['skipped']} skipped)."
+                    'total' => count($adminSubs),
+                    'sent' => $sent,
+                    'failed' => $failed
                 ]);
             }
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
-        case '/admin/telegram/queue/retry':
-            AuthService::requireAdmin();
+        case '/api/push/vapid-public-key':
+            try {
+                $pubKey = WebPushService::getPublicKey();
+                json_response(['success' => true, 'publicKey' => $pubKey]);
+            } catch (Throwable $e) {
+                json_response(['success' => false, 'error' => $e->getMessage()], 500);
+            }
+            break;
+
+        case '/api/push/subscribe':
             if ($method === 'POST') {
-                $retriedCount = TelegramQueueService::retryFailedJobs();
-                $stats = TelegramQueueService::getQueueStats();
-                json_response([
-                    'success' => true,
-                    'retried_count' => $retriedCount,
-                    'stats' => $stats,
-                    'message' => "{$retriedCount} failed notifications have been reset to pending for immediate processing."
-                ]);
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $endpoint = trim($input['endpoint'] ?? '');
+                $p256dh = trim($input['p256dh'] ?? '');
+                $auth = trim($input['auth'] ?? '');
+                $userType = trim($input['user_type'] ?? 'customer');
+
+                $userId = null;
+                if ($userType === 'admin') {
+                    if (!AuthService::check()) {
+                        json_response(['success' => false, 'error' => 'Admin login required to subscribe as admin.'], 401);
+                    }
+                    $userId = (int)AuthService::adminId();
+                } elseif (CustomerAuthService::check()) {
+                    $userId = (int)CustomerAuthService::customerId();
+                    $userType = 'customer';
+                } else {
+                    $userType = 'guest';
+                    // Store in session for order matching
+                    $_SESSION['guest_push_endpoint_hash'] = hash('sha256', $endpoint);
+                }
+
+                $res = NotificationService::subscribe($endpoint, $p256dh, $auth, $userType, $userId);
+                json_response($res);
             }
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
-        case '/admin/telegram/queue/stats':
-            AuthService::requireAdmin();
-            $stats = TelegramQueueService::getQueueStats();
-            json_response(['success' => true, 'stats' => $stats]);
+        case '/api/push/unsubscribe':
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $endpoint = trim($input['endpoint'] ?? '');
+                $success = NotificationService::unsubscribe($endpoint);
+                json_response(['success' => $success]);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/account/notifications/preferences':
+            CustomerAuthService::requireLogin('/account');
+            if ($method === 'POST') {
+                $token = $_POST[CSRF_TOKEN_KEY] ?? '';
+                if (!verify_csrf_token($token)) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /account');
+                    exit;
+                }
+                $customerId = (int)CustomerAuthService::customerId();
+                $orderUpdates = isset($_POST['order_updates']);
+                $promotions = isset($_POST['promotions']);
+
+                NotificationService::setCustomerPreferences($customerId, $orderUpdates, $promotions);
+                set_flash('success', 'Notification preferences saved successfully.');
+                header('Location: /account');
+                exit;
+            }
+            header('Location: /account');
             break;
 
         case '/admin/reports':

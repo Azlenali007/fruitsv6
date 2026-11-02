@@ -73,7 +73,7 @@ function checkInternalDirBlocked(string $path): bool {
 it_sec("9. Direct web access to '/app/bootstrap.php' is forbidden", checkInternalDirBlocked('/app/bootstrap.php'));
 it_sec("10. Direct web access to '/storage/logs/php_error.log' is forbidden", checkInternalDirBlocked('/storage/logs/php_error.log'));
 it_sec("11. Direct web access to '/database/schema.sql' is forbidden", checkInternalDirBlocked('/database/schema.sql'));
-it_sec("12. Direct web access to '/cron/telegram-notifications.php' is forbidden", checkInternalDirBlocked('/cron/telegram-notifications.php'));
+it_sec("12. Direct web access to '/storage/vapid_keys.json' is forbidden", checkInternalDirBlocked('/storage/vapid_keys.json'));
 it_sec("13. Direct web access to '/.env' is forbidden", checkInternalDirBlocked('/.env'));
 
 // ----------------------------------------------------
@@ -128,17 +128,19 @@ $expectedTables = [
     'customer_login_attempts', 'coupons', 'coupon_usage',
     'payment_transactions', 'payment_webhook_events',
     'delivery_areas', 'invoices', 'invoice_sequences',
-    'telegram_notification_queue'
+    'push_subscriptions', 'notifications', 'notification_deliveries',
+    'customer_notification_preferences', 'notification_dedup'
 ];
 
 $allTablesExist = true;
+$missingTbls = [];
 foreach ($expectedTables as $tbl) {
     if (!in_array($tbl, $tables, true)) {
         $allTablesExist = false;
-        break;
+        $missingTbls[] = $tbl;
     }
 }
-it_sec("22. All 18 core and e-commerce tables exist in MySQL", $allTablesExist);
+it_sec("22. All core and PWA push tables exist in MySQL", $allTablesExist, implode(', ', $missingTbls));
 
 // Check products multi-product columns
 $pCols = $pdo->query("SHOW COLUMNS FROM `products`")->fetchAll(PDO::FETCH_COLUMN);

@@ -31,7 +31,7 @@ ALTER TABLE `products`
 
 -- Add Index if not exists
 SET @exist := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_name = 'products' AND index_name = 'idx_category_id' AND table_schema = DATABASE());
-SET @sqlstmt := IF(@exist > 0, 'SELECT ''Index already exists''', 'ALTER TABLE `products` ADD INDEX `idx_category_id` (`category_id`)');
+SET @sqlstmt := IF(@exist > 0, 'DO 0', 'ALTER TABLE `products` ADD INDEX `idx_category_id` (`category_id`)');
 PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;

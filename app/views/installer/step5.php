@@ -3,9 +3,14 @@ $currentStep = 5;
 $installerTitle = 'Step 5: Business Settings - N.A Installer';
 ob_start();
 
-$prod = Product::getPrimary();
-$initialPrice = $prod['price'] ?? 40.00;
-$initialStock = $prod['stock_quantity'] ?? 150;
+$prod = null;
+try {
+    $prod = Product::getPrimary();
+} catch (Throwable $e) {
+    // Graceful fallback to default values if database tables are in transit
+}
+$initialPrice = (!empty($prod) && isset($prod['price'])) ? (float)$prod['price'] : 40.00;
+$initialStock = (!empty($prod) && isset($prod['stock_quantity'])) ? (int)$prod['stock_quantity'] : 150;
 ?>
 
 <div class="space-y-6">

@@ -18,16 +18,20 @@ $storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
     <meta property="og:title" content="<?= e($pageTitle ?? 'N.A Fresh Fruits & Coconuts') ?>">
     <meta property="og:description" content="Pure, natural and refreshing fresh tender coconut water.">
     <link rel="icon" href="/favicon.ico" sizes="any">
-    <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
-    <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+    <link rel="icon" href="/assets/images/icons/icon-192.png" type="image/png">
+    <link rel="apple-touch-icon" href="/assets/images/icons/apple-touch-icon.png">
 
     <!-- Web App Manifest & PWA Configuration -->
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#235d3a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="NA Coconuts">
+    <meta name="apple-mobile-web-app-title" content="NA Fruits">
     <meta name="mobile-web-app-capable" content="yes">
+    <meta name="csrf-token" content="<?= e(csrf_token()) ?>">
+
+    <!-- PWA & Push Notification Script -->
+    <script src="/assets/js/pwa-push.js" defer></script>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>

@@ -267,8 +267,9 @@ class OrderService {
             Invoice::createForOrder($orderRecord);
         }
 
-        // Enqueue future Telegram order notification asynchronously (post-commit, non-blocking)
-        TelegramService::enqueueOrderNotification($orderId, 'order_placed');
+        // Immediate PWA Web Push notification to admin devices and customer (Zero Cron)
+        NotificationService::sendNewOrderToAdmins($orderId);
+        NotificationService::sendOrderStatusToCustomer($orderId, 'order_confirmed');
 
         return [
             'success' => true,

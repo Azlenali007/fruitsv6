@@ -324,363 +324,154 @@ $settings = Setting::getAll();
             </div>
         </div>
 
-        <!-- Telegram Order Notifications Card (Decoupled & Background-Ready) -->
+        <!-- PWA Web Push Notifications Configuration Card -->
+        <?php 
+            $pushStats = NotificationService::getStats(); 
+        ?>
         <div class="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-5" x-data="{
             testing: false,
             testMsg: '',
             testSuccess: false,
-            showToken: false,
             runTest() {
-                const token = document.getElementById('tg_bot_token').value.trim();
-                const chatId = document.getElementById('tg_chat_id').value.trim();
-                
                 this.testing = true;
                 this.testMsg = '';
-                const fd = new FormData();
-                if (token) fd.append('token', token);
-                if (chatId) fd.append('chat_id', chatId);
-                
-                fetch('/admin/settings/telegram/test', {
+                const csrf = document.querySelector('meta[name=\'csrf-token\']')?.getAttribute('content') || '';
+                fetch('/admin/notifications/test-admin', {
                     method: 'POST',
-                    body: fd
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }
                 })
                 .then(r => r.json())
                 .then(d => {
                     this.testing = false;
                     this.testSuccess = d.success;
                     this.testMsg = d.success 
-                        ? '✓ ' + (d.message || 'Test notification sent successfully to Telegram!') 
-                        : ('✗ Failed: ' + (d.error || 'Connection error'));
+                        ? '✓ Test alert sent to ' + (d.sent || 0) + ' admin device(s)!' 
+                        : ('✗ ' + (d.error || 'Failed to dispatch test notification.'));
                 })
                 .catch(err => {
                     this.testing = false;
                     this.testSuccess = false;
-                    this.testMsg = '✗ Network error testing Telegram connection.';
+                    this.testMsg = '✗ Network error testing push dispatch.';
                 });
             }
         }">
             <div class="flex items-center justify-between border-b border-gray-100 pb-3">
                 <div class="flex items-center gap-2.5">
-                    <div class="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold text-sm">
-                        ✈️
+                    <div class="w-8 h-8 rounded-xl bg-emerald-50 text-brand-600 flex items-center justify-center font-bold text-sm">
+                        🔔
                     </div>
                     <div>
-                        <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Telegram Order Alerts</h2>
-                        <p class="text-[11px] text-gray-400">Automatic order notifications sent directly to your Telegram group or channel</p>
+                        <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">PWA Web Push Notifications</h2>
+                        <p class="text-[11px] text-gray-400">Native browser & mobile push alerts without external bot services or server cron jobs</p>
                     </div>
                 </div>
-                <span class="text-[10px] font-bold px-2.5 py-0.5 rounded-full <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600' ?>">
-                    <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'Active' : 'Disabled' ?>
-                </span>
+                <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                        VAPID Active
+                    </span>
+                    <a href="/admin/notifications" class="text-xs font-bold text-brand-600 hover:text-brand-700 underline">
+                        Notification Center &rarr;
+                    </a>
+                </div>
+            </div>
+
+            <!-- Device & Delivery Summary -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div class="bg-gray-50 border border-gray-100 rounded-2xl p-3">
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Admin Devices</span>
+                    <p class="text-xl font-black text-gray-900"><?= (int)$pushStats['admin_devices'] ?></p>
+                    <span class="text-[10px] text-emerald-600 font-medium">Subscribed</span>
+                </div>
+                <div class="bg-gray-50 border border-gray-100 rounded-2xl p-3">
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Customer Devices</span>
+                    <p class="text-xl font-black text-gray-900"><?= (int)$pushStats['customer_devices'] ?></p>
+                    <span class="text-[10px] text-brand-600 font-medium">Subscribed</span>
+                </div>
+                <div class="bg-gray-50 border border-gray-100 rounded-2xl p-3">
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Total Delivered</span>
+                    <p class="text-xl font-black text-emerald-600"><?= (int)$pushStats['total_delivered'] ?></p>
+                    <span class="text-[10px] text-gray-400 font-medium">Direct Push</span>
+                </div>
+                <div class="bg-gray-50 border border-gray-100 rounded-2xl p-3">
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Expired Pruned</span>
+                    <p class="text-xl font-black text-gray-500"><?= (int)$pushStats['total_failed'] ?></p>
+                    <span class="text-[10px] text-gray-400 font-medium">Auto-Cleaned</span>
+                </div>
             </div>
 
             <div class="space-y-4 text-xs">
-                <label class="flex items-start gap-3 p-3.5 bg-sky-50/50 border border-sky-100 rounded-2xl cursor-pointer">
+                <!-- Master Toggle -->
+                <label class="flex items-start gap-3 p-3.5 bg-emerald-50/50 border border-emerald-100 rounded-2xl cursor-pointer">
                     <input 
                         type="checkbox" 
-                        name="telegram_notifications_enabled" 
+                        name="push_notifications_enabled" 
                         value="1" 
-                        <?= ($settings['telegram_notifications_enabled'] ?? '0') === '1' ? 'checked' : '' ?>
-                        class="w-4 h-4 text-sky-600 rounded-sm focus:ring-sky-500 mt-0.5"
+                        <?= ($settings['push_notifications_enabled'] ?? '1') === '1' ? 'checked' : '' ?>
+                        class="w-4 h-4 text-brand-600 rounded-sm focus:ring-brand-500 mt-0.5"
                     >
                     <div>
-                        <span class="font-bold text-gray-900 block">Enable Instant Telegram Alerts</span>
-                        <span class="text-[11px] text-gray-500">Automatically send rich Telegram order alerts with customer details, delivery address, items, and totals.</span>
+                        <span class="font-bold text-gray-900 block">Enable Web Push Notifications System</span>
+                        <span class="text-[11px] text-gray-500">Dispatch instant notifications directly upon order placement and status transitions without any cron jobs.</span>
                     </div>
                 </label>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block font-bold text-gray-700 uppercase mb-1">Telegram Bot Token</label>
-                        <div class="relative">
-                            <input 
-                                :type="showToken ? 'text' : 'password'" 
-                                id="tg_bot_token"
-                                name="telegram_bot_token" 
-                                value="<?= e($settings['telegram_bot_token'] ?? '') ?>" 
-                                placeholder="e.g. 123456789:ABCDefghIJKLmnOPQRstuvWXyz"
-                                class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 pr-10 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                            >
-                            <button 
-                                type="button" 
-                                @click="showToken = !showToken" 
-                                class="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 cursor-pointer"
-                                :title="showToken ? 'Hide token' : 'Show token'"
-                            >
-                                <span x-show="!showToken">👁️</span>
-                                <span x-show="showToken">🙈</span>
-                            </button>
-                        </div>
-                        <span class="text-[10px] text-gray-400 mt-1 block">Created via @BotFather. Saved securely on the server.</span>
-                    </div>
-
-                    <div>
-                        <label class="block font-bold text-gray-700 uppercase mb-1">Target Chat / Channel / Group ID</label>
-                        <input 
-                            type="text" 
-                            id="tg_chat_id"
-                            name="telegram_chat_id" 
-                            value="<?= e($settings['telegram_chat_id'] ?? '') ?>" 
-                            placeholder="e.g. -100123456789 or 98765432"
-                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-brand-600 focus:outline-none"
-                        >
-                        <span class="text-[10px] text-gray-400 mt-1 block">Chat or group ID (e.g. group ID starting with minus sign like -100...).</span>
-                    </div>
-                </div>
-
-                <!-- Event notification toggles -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <!-- Detailed Event Toggles -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label class="flex items-center gap-2.5 p-3 bg-gray-50 border border-gray-200 rounded-2xl cursor-pointer">
                         <input 
                             type="checkbox" 
-                            name="telegram_send_on_cod" 
+                            name="push_notify_admin_on_order" 
                             value="1" 
-                            <?= ($settings['telegram_send_on_cod'] ?? '1') === '1' ? 'checked' : '' ?> 
+                            <?= ($settings['push_notify_admin_on_order'] ?? '1') === '1' ? 'checked' : '' ?> 
                             class="w-4 h-4 text-brand-600 rounded"
                         >
                         <div>
-                            <span class="font-bold text-gray-800 text-xs block">Cash on Delivery Orders</span>
-                            <span class="text-[10px] text-gray-500">Alert immediately when a customer places a COD order.</span>
+                            <span class="font-bold text-gray-800 text-xs block">Admin Device Alerts on New Orders</span>
+                            <span class="text-[10px] text-gray-500">Alert subscribed store manager phones immediately when an order is placed.</span>
                         </div>
                     </label>
 
                     <label class="flex items-center gap-2.5 p-3 bg-gray-50 border border-gray-200 rounded-2xl cursor-pointer">
                         <input 
                             type="checkbox" 
-                            name="telegram_send_on_online_paid" 
+                            name="push_notify_customer_on_status" 
                             value="1" 
-                            <?= ($settings['telegram_send_on_online_paid'] ?? '1') === '1' ? 'checked' : '' ?> 
+                            <?= ($settings['push_notify_customer_on_status'] ?? '1') === '1' ? 'checked' : '' ?> 
                             class="w-4 h-4 text-brand-600 rounded"
                         >
                         <div>
-                            <span class="font-bold text-gray-800 text-xs block">Verified Online Payments</span>
-                            <span class="text-[10px] text-gray-500">Alert only after Razorpay signature verification succeeds.</span>
+                            <span class="font-bold text-gray-800 text-xs block">Customer Lifecycle Order Updates</span>
+                            <span class="text-[10px] text-gray-500">Send alerts when order status changes to Confirmed, Prepared, Out for Delivery, or Delivered.</span>
                         </div>
                     </label>
                 </div>
 
-                <div class="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100">
-                    <button 
-                        type="button" 
-                        @click="runTest()"
-                        :disabled="testing"
-                        class="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 text-xs shadow-2xs disabled:opacity-50 cursor-pointer"
-                    >
-                        <span x-show="!testing">⚡ Test Bot Notification</span>
-                        <span x-show="testing">Connecting to Telegram...</span>
-                    </button>
+                <!-- VAPID Key Info -->
+                <div class="p-3 bg-gray-50 border border-gray-200 rounded-2xl text-[11px] text-gray-600 space-y-1">
+                    <div class="font-bold text-gray-800 uppercase text-[10px] tracking-wider">VAPID Public Key (RFC 8292)</div>
+                    <div class="font-mono text-[10px] text-gray-500 break-all select-all bg-white p-2 rounded-xl border border-gray-100">
+                        <?= e(substr($pushStats['vapid_public_key'] ?? '', 0, 48)) ?>... (Protected outside web root at storage/vapid_keys.json)
+                    </div>
+                </div>
+
+                <!-- Test button & Admin center CTA -->
+                <div class="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100">
+                    <div class="flex items-center gap-2">
+                        <button 
+                            type="button" 
+                            @click="runTest()"
+                            :disabled="testing"
+                            class="bg-emerald-50 hover:bg-emerald-100 text-[#235d3a] border border-emerald-200 font-bold px-4 py-2 rounded-xl transition flex items-center gap-1.5 text-xs disabled:opacity-50 cursor-pointer"
+                        >
+                            <span x-show="!testing">⚡ Test Push on Admin Devices</span>
+                            <span x-show="testing">Dispatching push...</span>
+                        </button>
+                        <a href="/admin/notifications" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-3 py-2 rounded-xl transition text-xs">
+                            Broadcast Console
+                        </a>
+                    </div>
                     <span x-show="testMsg" x-text="testMsg" class="font-bold text-xs" :class="testSuccess ? 'text-emerald-700' : 'text-red-600'"></span>
                 </div>
-            </div>
-
-            <?php 
-                $queueStats = TelegramQueueService::getQueueStats(); 
-                $projectRoot = realpath(__DIR__ . '/../../..');
-                $cronCommand = "* * * * * /usr/bin/php {$projectRoot}/cron/telegram-notifications.php >> {$projectRoot}/storage/logs/telegram_cron.log 2>&1";
-            ?>
-            <!-- Server-Side Cron Job & Queue Telemetry Card -->
-            <div class="mt-4 pt-4 border-t border-gray-100" x-data="{
-                runningWorker: false,
-                retryingQueue: false,
-                copiedCron: false,
-                workerActionMsg: '',
-                stats: <?= htmlspecialchars(json_encode($queueStats), ENT_QUOTES, 'UTF-8') ?>,
-                refreshStats() {
-                    fetch('/admin/telegram/queue/stats')
-                        .then(r => r.json())
-                        .then(d => { if (d.success && d.stats) this.stats = d.stats; });
-                },
-                runWorkerNow() {
-                    this.runningWorker = true;
-                    this.workerActionMsg = '';
-                    fetch('/admin/telegram/worker/run', { method: 'POST' })
-                        .then(r => r.json())
-                        .then(d => {
-                            this.runningWorker = false;
-                            this.workerActionMsg = d.message || 'Queue batch processed.';
-                            if (d.stats) this.stats = d.stats;
-                        })
-                        .catch(() => {
-                            this.runningWorker = false;
-                            this.workerActionMsg = 'Error executing queue processor.';
-                        });
-                },
-                retryFailed() {
-                    this.retryingQueue = true;
-                    this.workerActionMsg = '';
-                    fetch('/admin/telegram/queue/retry', { method: 'POST' })
-                        .then(r => r.json())
-                        .then(d => {
-                            this.retryingQueue = false;
-                            this.workerActionMsg = d.message || 'Failed notifications reset to pending.';
-                            if (d.stats) this.stats = d.stats;
-                        })
-                        .catch(() => {
-                            this.retryingQueue = false;
-                            this.workerActionMsg = 'Error retrying queue items.';
-                        });
-                },
-                copyCronCommands() {
-                    const cmd = <?= json_encode($cronCommand) ?>;
-                    if (navigator.clipboard) {
-                        navigator.clipboard.writeText(cmd).then(() => {
-                            this.copiedCron = true;
-                            setTimeout(() => { this.copiedCron = false; }, 2500);
-                        });
-                    }
-                }
-            }">
-                <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs font-bold text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
-                            <span class="relative flex h-2.5 w-2.5">
-                                <span :class="stats.is_cron_active ? 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75' : ''"></span>
-                                <span :class="stats.is_cron_active ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500' : (stats.cron_status === 'delayed' ? 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500' : 'relative inline-flex rounded-full h-2.5 w-2.5 bg-gray-400')"></span>
-                            </span>
-                            <span>Server-Side Cron Job (30-Second Schedule)</span>
-                        </span>
-                    </div>
-
-                    <div class="flex items-center gap-2 text-[11px]">
-                        <span class="text-gray-500 font-medium">Cron Status:</span>
-                        <template x-if="stats.is_cron_active">
-                            <span class="bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full uppercase text-[10px] inline-flex items-center gap-1">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
-                                ACTIVE (Verified <span x-text="stats.seconds_since_cron"></span>s ago)
-                            </span>
-                        </template>
-                        <template x-if="!stats.is_cron_active && stats.cron_status === 'delayed'">
-                            <span class="bg-amber-100 text-amber-800 font-bold px-2.5 py-0.5 rounded-full uppercase text-[10px]">
-                                DELAYED (<span x-text="stats.seconds_since_cron"></span>s ago)
-                            </span>
-                        </template>
-                        <template x-if="!stats.is_cron_active && stats.cron_status !== 'delayed'">
-                            <span class="bg-gray-100 text-gray-700 font-bold px-2.5 py-0.5 rounded-full uppercase text-[10px]">
-                                INACTIVE / AWAITING CRON
-                            </span>
-                        </template>
-                    </div>
-                </div>
-
-                <!-- Cron & Queue metrics grid -->
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3 text-center">
-                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-amber-700">Pending Queue</div>
-                        <div class="text-lg font-black text-amber-900" x-text="stats.pending">0</div>
-                        <div class="text-[9px] text-gray-400">waiting for 30s cron</div>
-                    </div>
-                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-sky-700">Last Cron Execution</div>
-                        <div class="text-sm font-black text-sky-900 truncate" x-text="stats.cron_last_execution_at ? stats.cron_last_execution_at.split(' ')[1] : 'Never'">Never</div>
-                        <div class="text-[9px] text-gray-500" x-text="stats.cron_last_execution_at ? (stats.seconds_since_cron + 's ago (' + stats.cron_total_runs + ' runs)') : 'Awaiting first run'"></div>
-                    </div>
-                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-emerald-700">Last Telegram Delivery</div>
-                        <div class="text-sm font-black text-emerald-900 truncate" x-text="stats.last_delivery_at ? stats.last_delivery_at.split(' ')[1] : 'None yet'">None yet</div>
-                        <div class="text-[9px] text-gray-500" x-text="stats.sent + ' delivered total'">0 delivered total</div>
-                    </div>
-                    <div class="bg-gray-50 border border-gray-100 rounded-2xl p-2.5">
-                        <div class="text-[10px] uppercase font-bold text-red-700">Failed / Retrying</div>
-                        <div class="text-lg font-black text-red-900" x-text="stats.failed">0</div>
-                        <div class="text-[9px] text-gray-400" x-text="stats.processing + ' in processing'">0 in processing</div>
-                    </div>
-                </div>
-
-                <!-- Hosting Server Crontab Setup Box (cPanel / DirectAdmin / Linux) -->
-                <div class="bg-slate-900 text-slate-100 rounded-2xl p-3.5 mb-3 border border-slate-800 text-xs">
-                    <div class="flex items-center justify-between gap-2 mb-2">
-                        <div class="flex items-center gap-1.5 font-bold text-slate-300 text-[11px]">
-                            <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                            <span>Single Server Crontab Entry (cPanel, DirectAdmin, or Linux Server)</span>
-                        </div>
-                        <button 
-                            type="button" 
-                            @click="copyCronCommands()"
-                            class="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold px-2.5 py-1 rounded-lg text-[10px] transition cursor-pointer flex items-center gap-1"
-                        >
-                            <span x-show="!copiedCron">📋 Copy Cron Command</span>
-                            <span x-show="copiedCron" class="text-emerald-400">✓ Copied to Clipboard!</span>
-                        </button>
-                    </div>
-                    <p class="text-[10px] text-slate-400 mb-2">
-                        Only ONE Cron Job entry is required. The script executes automatically every minute and performs two processing cycles 30 seconds apart:
-                    </p>
-                    <pre class="bg-black/50 p-2.5 rounded-xl text-[10px] font-mono text-emerald-400 overflow-x-auto whitespace-pre leading-relaxed select-all border border-slate-800"><?= e($cronCommand) ?></pre>
-                </div>
-
-                <!-- Action buttons -->
-                <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button 
-                            type="button" 
-                            @click="runWorkerNow()"
-                            :disabled="runningWorker"
-                            class="bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 text-[11px] disabled:opacity-50 cursor-pointer"
-                            title="Server Cron runs automatically. Use this button only if you want to manually test batch processing."
-                        >
-                            <span x-show="!runningWorker">⚡ Test Queue Processing (Manual Debug Only)</span>
-                            <span x-show="runningWorker">Processing batch...</span>
-                        </button>
-                        <button 
-                            type="button" 
-                            @click="retryFailed()"
-                            :disabled="retryingQueue || stats.failed === 0"
-                            class="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 text-[11px] disabled:opacity-50 cursor-pointer"
-                        >
-                            <span x-show="!retryingQueue">🔄 Retry Failed (<span x-text="stats.failed"></span>)</span>
-                            <span x-show="retryingQueue">Resetting queue...</span>
-                        </button>
-                        <button 
-                            type="button" 
-                            @click="refreshStats()"
-                            class="text-gray-400 hover:text-gray-600 p-1 text-[11px] cursor-pointer"
-                            title="Refresh statistics"
-                        >
-                            🔄 Refresh
-                        </button>
-                    </div>
-
-                    <span x-show="workerActionMsg" x-text="workerActionMsg" class="font-bold text-[11px] text-emerald-700"></span>
-                </div>
-
-                <!-- Recent notifications table snippet -->
-                <template x-if="stats.recent_jobs && stats.recent_jobs.length > 0">
-                    <div class="mt-3 overflow-x-auto border border-gray-100 rounded-xl">
-                        <table class="w-full text-left text-[11px]">
-                            <thead class="bg-gray-50 border-b border-gray-100 text-gray-500 font-bold uppercase text-[9px]">
-                                <tr>
-                                    <th class="py-2 px-3">Order</th>
-                                    <th class="py-2 px-3">Event</th>
-                                    <th class="py-2 px-3">Status</th>
-                                    <th class="py-2 px-3">Attempts</th>
-                                    <th class="py-2 px-3">Time</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-100">
-                                <template x-for="j in stats.recent_jobs" :key="j.id">
-                                    <tr class="hover:bg-gray-50/50">
-                                        <td class="py-1.5 px-3 font-mono font-bold text-gray-800" x-text="j.order_number || ('#' + j.order_id)"></td>
-                                        <td class="py-1.5 px-3 capitalize text-gray-600" x-text="(j.event_type || '').replace('_', ' ')"></td>
-                                        <td class="py-1.5 px-3">
-                                            <span 
-                                                class="px-2 py-0.5 rounded-full font-bold text-[9px] uppercase"
-                                                :class="{
-                                                    'bg-amber-100 text-amber-800': j.status === 'pending',
-                                                    'bg-blue-100 text-blue-800': j.status === 'processing',
-                                                    'bg-emerald-100 text-emerald-800': j.status === 'sent',
-                                                    'bg-red-100 text-red-800': j.status === 'failed'
-                                                }"
-                                                x-text="j.status"
-                                            ></span>
-                                        </td>
-                                        <td class="py-1.5 px-3 text-gray-500" x-text="j.attempts + ' / ' + j.max_attempts"></td>
-                                        <td class="py-1.5 px-3 text-gray-400" x-text="j.created_at"></td>
-                                    </tr>
-                                </template>
-                            </tbody>
-                        </table>
-                    </div>
-                </template>
             </div>
         </div>
 
