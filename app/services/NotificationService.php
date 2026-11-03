@@ -172,17 +172,41 @@ class NotificationService {
         ];
 
         $res = WebPushService::sendNotification($sub, $payload);
+        $endpointHost = parse_url($sub['endpoint'], PHP_URL_HOST) ?? 'push-service';
+
         if ($res['success']) {
             $pdo->prepare("UPDATE `push_subscriptions` SET `last_used_at` = NOW() WHERE `id` = ?")->execute([$sub['id']]);
-            return ['success' => true, 'message' => 'Test notification sent to this device successfully!'];
+            return [
+                'success' => true,
+                'http_code' => $res['http_code'] ?? 201,
+                'latency_ms' => $res['latency_ms'] ?? 0,
+                'endpoint_host' => $endpointHost,
+                'message' => 'Real push alert delivered to this device! (HTTP ' . ($res['http_code'] ?? 201) . ' via ' . $endpointHost . ')',
+                'response_body' => $res['response_body'] ?? ''
+            ];
         }
 
         if (!empty($res['expired'])) {
             self::removeSubscriptionById((int)$sub['id']);
-            return ['success' => false, 'error' => 'Push subscription has expired on the push gateway. Please re-enroll.'];
+            return [
+                'success' => false,
+                'http_code' => $res['http_code'] ?? 410,
+                'latency_ms' => $res['latency_ms'] ?? 0,
+                'endpoint_host' => $endpointHost,
+                'expired' => true,
+                'error' => 'Push subscription has expired on push gateway (' . $endpointHost . ' returned HTTP ' . ($res['http_code'] ?? 410) . '). Subscription removed from DB. Please re-enroll.',
+                'response_body' => $res['response_body'] ?? ''
+            ];
         }
 
-        return ['success' => false, 'error' => 'Push gateway returned error: ' . ($res['error'] ?? 'HTTP ' . ($res['http_code'] ?? 'failed'))];
+        return [
+            'success' => false,
+            'http_code' => $res['http_code'] ?? 0,
+            'latency_ms' => $res['latency_ms'] ?? 0,
+            'endpoint_host' => $endpointHost,
+            'error' => 'Push gateway error: ' . ($res['error'] ?? 'HTTP ' . ($res['http_code'] ?? 'failed')),
+            'response_body' => $res['response_body'] ?? ''
+        ];
     }
 
     /**

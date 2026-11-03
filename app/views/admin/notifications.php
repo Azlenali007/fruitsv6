@@ -168,13 +168,14 @@ require __DIR__ . '/layout-header.php';
                 <p id="admin-enroll-status-text" class="text-xs text-emerald-100/90 leading-relaxed">
                     Enroll this device to receive instant push alerts whenever a customer places an order or completes payment.
                 </p>
+                <div id="admin-device-test-result" class="hidden text-xs py-1"></div>
             </div>
 
             <div class="flex flex-wrap items-center gap-2 shrink-0">
                 <button 
                     type="button" 
                     id="admin-enroll-btn"
-                    onclick="window.NA_PWA.subscribeDevice('admin').then(r => { if(r.success) { alert('✓ Device enrolled! This browser is now verified and active for instant admin order alerts.'); } })"
+                    onclick="window.NA_PWA.subscribeDevice('admin')"
                     class="bg-white hover:bg-emerald-50 text-[#143823] font-black text-xs py-2.5 px-5 rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer"
                 >
                     <svg class="w-4 h-4 text-emerald-700" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
@@ -186,7 +187,7 @@ require __DIR__ . '/layout-header.php';
                     id="admin-device-test-btn"
                     style="display: none;"
                     onclick="window.NA_PWA.testCurrentDevice('admin')"
-                    class="bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 px-4 rounded-xl border border-emerald-400/40 transition flex items-center gap-1.5 cursor-pointer"
+                    class="bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 px-4 rounded-xl border border-emerald-400/40 transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                     <span>Send Test Alert to This Screen</span>
@@ -194,13 +195,89 @@ require __DIR__ . '/layout-header.php';
 
                 <button 
                     type="button" 
+                    id="admin-repair-btn"
+                    style="display: none;"
+                    onclick="window.NA_PWA.repairSubscription('admin')"
+                    title="Re-synchronize and generate fresh push token"
+                    class="bg-white/10 hover:bg-white/20 text-emerald-100 font-semibold text-xs py-2.5 px-3.5 rounded-xl border border-white/20 transition cursor-pointer"
+                >
+                    Re-sync Device
+                </button>
+
+                <button 
+                    type="button" 
                     id="admin-unenroll-btn"
                     style="display: none;"
                     onclick="if(confirm('Disconnect this device from admin push alerts?')) window.NA_PWA.unsubscribeDevice()"
-                    class="bg-black/20 hover:bg-black/30 text-emerald-200 hover:text-white font-semibold text-xs py-2.5 px-3.5 rounded-xl transition cursor-pointer"
+                    class="bg-black/20 hover:bg-black/30 text-emerald-200 hover:text-white font-semibold text-xs py-2.5 px-3 rounded-xl transition cursor-pointer"
                 >
-                    Unenroll Device
+                    Unenroll
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Diagnostics Panel (Requirement 5) -->
+    <div class="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
+            <div>
+                <h3 class="text-sm font-black text-gray-900 tracking-tight flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Live Web Push Diagnostics Panel
+                </h3>
+                <p class="text-xs text-gray-400 mt-0.5">Real-time status of browser permissions, service worker lifecycle, PushManager, and database sync.</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button 
+                    type="button"
+                    onclick="window.NA_PWA && window.NA_PWA.syncDeviceStatus()"
+                    class="text-xs text-brand-700 bg-brand-50 hover:bg-brand-100 px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    <span>Refresh Diagnostics</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">1. Browser Permission</span>
+                <div id="diag-val-permission" class="font-mono font-bold text-gray-700">Checking...</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">2. Service Worker</span>
+                <div id="diag-val-sw" class="font-mono font-bold text-gray-700">Checking...</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">3. PushManager API</span>
+                <div id="diag-val-push" class="font-mono font-bold text-gray-700">Checking...</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">4. Browser Token</span>
+                <div id="diag-val-sub" class="font-mono font-bold text-gray-700 truncate">Checking...</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">5. Server Database</span>
+                <div id="diag-val-db" class="font-mono font-bold text-gray-700">Checking...</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">6. Finite State Machine</span>
+                <div id="diag-val-fsm" class="font-mono font-bold text-gray-700">Checking...</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">7. VAPID Crypto Key</span>
+                <div class="font-mono font-bold text-emerald-700 text-[11px]">NIST P-256 (65-byte)</div>
+            </div>
+
+            <div class="bg-gray-50/80 rounded-2xl p-3 border border-gray-100 space-y-1">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">8. Last Push Gateway Result</span>
+                <div id="diag-val-last-push" class="font-mono font-bold text-gray-700">None in this session</div>
             </div>
         </div>
     </div>

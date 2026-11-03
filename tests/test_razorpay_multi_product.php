@@ -173,8 +173,11 @@ echo "D. MULTI-PRODUCT CART & NON-MERGING OPTIONS:\n";
 
 CartService::clear();
 
+$waterProd = Product::getBySlug('fresh-coconut-water') ?? Product::getById(1);
+$waterId = (int)($waterProd['id'] ?? 1);
+
 // Add Product 1 (Fresh Coconut Water, default cutting none)
-CartService::addItem(1, 2);
+CartService::addItem($waterId, 2);
 
 // Add Product 2 with Whole Coconut (Option: whole, +₹0)
 CartService::addItem($newProdId, 1, 'whole');
@@ -194,7 +197,7 @@ $waterItem = null;
 foreach ($cart['items'] as $it) {
     if ($it['product_id'] == $newProdId && $it['preparation_option_id'] === 'whole') $wholeItem = $it;
     if ($it['product_id'] == $newProdId && $it['preparation_option_id'] === 'malai_inc') $malaiItem = $it;
-    if ($it['product_id'] == 1) $waterItem = $it;
+    if ($it['product_id'] == $waterId) $waterItem = $it;
 }
 
 it_mp("11. Water item subtotal is ₹80 (2 x ₹40)", $waterItem !== null && (float)$waterItem['subtotal'] === 80.00);
@@ -220,7 +223,7 @@ $comboId = Combo::create([
     'stock_quantity' => 25,
     'is_available' => 1
 ], [
-    ['product_id' => 1, 'quantity' => 1, 'notes' => '1x Water'],
+    ['product_id' => $waterId, 'quantity' => 1, 'notes' => '1x Water'],
     ['product_id' => $newProdId, 'quantity' => 1, 'notes' => '1x Coconut']
 ]);
 

@@ -2,22 +2,39 @@
  * Progressive Web App & Centralized Web Push Notification Client Manager
  * N.A Fresh Fruits & Coconuts
  * 
- * Supports:
- * - Real Admin device enrollment with live server verification
- * - Customer post-login / post-registration "Stay Updated!" prompt
- * - Detection and handling of already enrolled devices (updates subscription without duplicates)
- * - Single centralized permission management system
- * - iOS 16.4+ Safari Add to Home Screen detection and guidance
- * - Safe VAPID key subscription and CSRF-protected backend registration
+ * Implements:
+ * - Deterministic 10-state finite state machine (FSM)
+ * - Strict separation of Permission vs Browser Subscription vs Server Enrollment
+ * - Sequential, self-healing subscription flow (RFC 8291 / RFC 8292)
+ * - Safe VAPID key decoding and CSRF-protected backend registration
+ * - Live diagnostics panel reporting for admin portal
+ * - Post-login & post-registration customer prompt handling
+ * - Clean device re-sync & repair capabilities
  */
 
 (function () {
     'use strict';
 
+    // Explicit Push States
+    const PushState = {
+        UNSUPPORTED: 'UNSUPPORTED',
+        PERMISSION_NOT_REQUESTED: 'PERMISSION_NOT_REQUESTED',
+        PERMISSION_DENIED: 'PERMISSION_DENIED',
+        PERMISSION_GRANTED: 'PERMISSION_GRANTED',
+        DEVICE_NOT_SUBSCRIBED: 'DEVICE_NOT_SUBSCRIBED',
+        SUBSCRIPTION_PENDING: 'SUBSCRIPTION_PENDING',
+        SUBSCRIPTION_SAVED: 'SUBSCRIPTION_SAVED',
+        DEVICE_ENROLLED: 'DEVICE_ENROLLED',
+        SUBSCRIPTION_EXPIRED: 'SUBSCRIPTION_EXPIRED',
+        ENROLLMENT_FAILED: 'ENROLLMENT_FAILED'
+    };
+
     // Utility: Convert base64url string to Uint8Array for PushManager
     function urlBase64ToUint8Array(base64String) {
-        const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-        const base64 = (base64String + padding)
+        if (!base64String) return new Uint8Array(0);
+        const cleanStr = String(base64String).trim();
+        const padding = '='.repeat((4 - (cleanStr.length % 4)) % 4);
+        const base64 = (cleanStr + padding)
             .replace(/\-/g, '+')
             .replace(/_/g, '/');
         const rawData = window.atob(base64);
@@ -28,7 +45,7 @@
         return outputArray;
     }
 
-    // Helper: Convert ArrayBuffer to base64url
+    // Utility: Convert ArrayBuffer to base64url
     function arrayBufferToBase64Url(buffer) {
         const bytes = new Uint8Array(buffer);
         let binary = '';
@@ -41,42 +58,92 @@
             .replace(/=+$/, '');
     }
 
-    // Platform detection helpers
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
     const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
 
     window.NA_PWA = {
+        PushState: PushState,
+        currentState: PushState.PERMISSION_NOT_REQUESTED,
+        lastError: null,
         swRegistration: null,
         deferredPrompt: null,
         isIos: isIos,
         isStandalone: isStandalone,
         vapidPublicKey: null,
         isSubscribed: false,
+        isServerVerified: false,
         deviceRole: null, // 'admin' | 'customer' | 'guest'
         currentEndpoint: null,
+        subscriptionId: null,
+        lastPushResult: null,
 
         getCsrfToken: function () {
-            return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+            return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+                || document.querySelector('input[name="_csrf_token"]')?.value
+                || '';
         },
 
         isSupported: function () {
             return ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
         },
 
+        // Determine current true state based on browser permission, pushManager subscription, and server verification
+        computeCurrentState: function () {
+            if (!this.isSupported()) {
+                return PushState.UNSUPPORTED;
+            }
+
+            const perm = Notification.permission;
+            if (perm === 'denied') {
+                return PushState.PERMISSION_DENIED;
+            }
+
+            if (perm === 'default') {
+                return PushState.PERMISSION_NOT_REQUESTED;
+            }
+
+            // perm is 'granted'
+            if (!this.currentEndpoint) {
+                return PushState.PERMISSION_GRANTED;
+            }
+
+            if (!this.isServerVerified) {
+                return PushState.DEVICE_NOT_SUBSCRIBED;
+            }
+
+            return PushState.DEVICE_ENROLLED;
+        },
+
+        setState: function (newState, errorDetail = null) {
+            this.currentState = newState;
+            if (errorDetail) {
+                this.lastError = errorDetail;
+            }
+            console.log('[PWA Push FSM] State changed ->', newState, errorDetail ? `(${errorDetail})` : '');
+            this.updateUIState();
+        },
+
         init: async function () {
             if (!this.isSupported()) {
                 console.log('[PWA] Service Worker or Push Notifications not supported in this browser.');
-                this.updateUIState();
+                this.setState(PushState.UNSUPPORTED);
                 return;
             }
 
             try {
-                // Register Service Worker
+                // Ensure service worker is registered
                 const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
                 this.swRegistration = reg;
-                console.log('[PWA] Service Worker registered:', reg.scope);
+                console.log('[PWA] Service Worker registered with scope:', reg.scope);
 
-                // Listen for service worker updates
+                // Listen for SW updates
                 reg.addEventListener('updatefound', () => {
                     const newWorker = reg.installing;
                     if (newWorker) {
@@ -88,135 +155,149 @@
                     }
                 });
 
-                // Check existing subscription and sync with server
+                // Sync device status against active SW and database
                 await this.syncDeviceStatus();
 
-                // Intercept Android beforeinstallprompt
+                // Android beforeinstallprompt
                 window.addEventListener('beforeinstallprompt', (e) => {
                     e.preventDefault();
                     this.deferredPrompt = e;
                     this.showInstallBanner();
                 });
 
-                // Detect appinstalled
                 window.addEventListener('appinstalled', () => {
                     console.log('[PWA] App successfully installed.');
                     this.hideInstallBanner();
                 });
 
-                // Check if post-login / post-registration notification prompt should be displayed
+                // Post auth prompt check
                 this.checkPostAuthPrompt();
 
             } catch (err) {
-                console.error('[PWA] Init error:', err);
-                this.updateUIState();
+                console.error('[PWA] Initialization error:', err);
+                this.setState(this.computeCurrentState(), err.message);
             }
         },
 
-        // Fetch VAPID Public Key from server (cached)
+        // Fetch and cache VAPID Public Key from server
         getVapidKey: async function () {
             if (this.vapidPublicKey) {
                 return this.vapidPublicKey;
             }
             const res = await fetch('/api/push/vapid-public-key');
+            if (!res.ok) {
+                throw new Error(`Failed to fetch VAPID key (HTTP ${res.status})`);
+            }
             const data = await res.json();
             if (!data.success || !data.publicKey) {
-                throw new Error(data.error || 'Failed to retrieve VAPID public key from server');
+                throw new Error(data.error || 'Server did not return a valid VAPID public key');
             }
-            this.vapidPublicKey = data.publicKey;
+            this.vapidPublicKey = data.publicKey.trim();
             return this.vapidPublicKey;
         },
 
-        // Query server to verify if current device is registered and what role it holds
+        // Sync local browser subscription with backend database
         syncDeviceStatus: async function () {
             if (!this.isSupported()) {
-                this.updateUIState();
+                this.setState(PushState.UNSUPPORTED);
                 return;
             }
 
             try {
-                const reg = this.swRegistration || await navigator.serviceWorker.ready;
+                const reg = await navigator.serviceWorker.ready;
                 const sub = await reg.pushManager.getSubscription();
+
                 if (!sub) {
-                    this.isSubscribed = false;
-                    this.deviceRole = null;
                     this.currentEndpoint = null;
-                    this.updateUIState();
+                    this.isSubscribed = false;
+                    this.isServerVerified = false;
+                    this.deviceRole = null;
+                    this.subscriptionId = null;
+                    this.setState(this.computeCurrentState());
                     return;
                 }
 
                 this.currentEndpoint = sub.endpoint;
+                this.isSubscribed = true;
 
-                // Verify with server database
+                // Query server for verification
                 const res = await fetch('/api/push/device-status', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ endpoint: sub.endpoint })
                 });
-                const data = await res.json();
 
-                if (data.success && data.enrolled) {
-                    this.isSubscribed = true;
-                    this.deviceRole = data.user_type;
-                } else {
-                    // Subscription exists in browser but not registered on server
-                    this.isSubscribed = false;
-                    this.deviceRole = null;
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success && data.enrolled) {
+                        this.isServerVerified = true;
+                        this.deviceRole = data.user_type;
+                        this.subscriptionId = data.subscription_id;
+                        this.setState(PushState.DEVICE_ENROLLED);
+                        return;
+                    }
                 }
 
-                this.updateUIState();
+                // Browser has a subscription token, but not yet verified in backend DB
+                this.isServerVerified = false;
+                this.setState(PushState.DEVICE_NOT_SUBSCRIBED);
+
             } catch (err) {
                 console.warn('[PWA] syncDeviceStatus error:', err);
-                this.updateUIState();
+                this.setState(this.computeCurrentState(), err.message);
             }
         },
 
-        // Subscribe device (Customer or Admin) with real server verification
-        subscribeDevice: async function (userType = 'customer') {
+        // Complete sequential device subscription flow
+        subscribeDevice: async function (userType = 'customer', options = {}) {
             if (!this.isSupported()) {
-                alert('Web Push Notifications are not supported by your current browser.');
+                alert('Web Push Notifications are not supported by this browser.');
                 return { success: false, error: 'Push not supported' };
             }
 
-            // Check HTTPS / Secure Context (Allow localhost / 127.0.0.1 for local dev)
             const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
             if (!window.isSecureContext && !isLocal) {
                 alert('Push Notifications require a secure HTTPS connection.');
                 return { success: false, error: 'HTTPS required' };
             }
 
-            // iOS 16.4+ Requirement: App MUST be added to Home Screen first
             if (this.isIos && !this.isStandalone) {
                 this.showIosInstallModal();
                 return { success: false, requires_ios_install: true };
             }
 
-            // If permission was already denied in browser, don't repeatedly prompt
             if (Notification.permission === 'denied') {
+                this.setState(PushState.PERMISSION_DENIED);
                 this.showBlockedPermissionModal();
                 return { success: false, error: 'Permission denied in browser settings' };
             }
 
+            this.setState(PushState.SUBSCRIPTION_PENDING);
+
             try {
-                // Request user permission explicitly
+                // Step 1: Request Notification permission
                 let perm = Notification.permission;
                 if (perm === 'default') {
                     perm = await Notification.requestPermission();
                 }
 
                 if (perm !== 'granted') {
-                    this.updateUIState();
+                    this.setState(PushState.PERMISSION_DENIED);
                     this.showBlockedPermissionModal();
-                    return { success: false, error: 'Permission not granted' };
+                    return { success: false, error: 'Notification permission was not granted by user.' };
                 }
 
-                // Retrieve VAPID key and convert
+                // Step 2: Ensure Service Worker is active and ready
+                const reg = await navigator.serviceWorker.ready;
+                if (!reg) {
+                    throw new Error('Service worker failed to become ready.');
+                }
+
+                // Step 3: Fetch VAPID key
                 const vapidKey = await this.getVapidKey();
                 const appServerKey = urlBase64ToUint8Array(vapidKey);
 
-                const reg = this.swRegistration || await navigator.serviceWorker.ready;
-
-                // Handle existing subscription cleanly (avoid InvalidStateError if key changed)
+                // Step 4: Handle existing subscription cleanly
                 let subscription = await reg.pushManager.getSubscription();
                 if (subscription) {
                     try {
@@ -230,16 +311,17 @@
                                 }
                             }
                             if (!match) {
-                                console.log('[PWA] Unsubscribing old VAPID subscription before renewal');
+                                console.log('[PWA] Unsubscribing mismatched VAPID key before renewal');
                                 await subscription.unsubscribe();
                                 subscription = null;
                             }
                         }
                     } catch (e) {
-                        // ignore and subscribe
+                        // ignore and proceed
                     }
                 }
 
+                // Step 5: Subscribe with PushManager
                 if (!subscription) {
                     subscription = await reg.pushManager.subscribe({
                         userVisibleOnly: true,
@@ -247,11 +329,14 @@
                     });
                 }
 
+                this.currentEndpoint = subscription.endpoint;
+                this.isSubscribed = true;
+
+                // Step 6: Extract encryption keys
                 const subJson = subscription.toJSON();
                 let p256dh = subJson.keys?.p256dh;
                 let auth = subJson.keys?.auth;
 
-                // Fallback extraction if toJSON().keys is missing
                 if (!p256dh && subscription.getKey) {
                     const k = subscription.getKey('p256dh');
                     if (k) p256dh = arrayBufferToBase64Url(k);
@@ -262,47 +347,94 @@
                 }
 
                 if (!p256dh || !auth) {
-                    throw new Error('Browser did not provide valid encryption keys.');
+                    throw new Error('Browser PushManager did not provide required p256dh/auth encryption keys.');
                 }
 
-                // Send subscription to PHP backend
+                // Step 7: Transition to SUBSCRIPTION_SAVED and send to backend API
+                this.setState(PushState.SUBSCRIPTION_SAVED);
+
+                const csrfToken = this.getCsrfToken();
                 const response = await fetch('/api/push/subscribe', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRF-Token': this.getCsrfToken()
+                        'X-CSRF-Token': csrfToken
                     },
                     body: JSON.stringify({
                         endpoint: subscription.endpoint,
                         p256dh: p256dh,
                         auth: auth,
                         user_type: userType,
-                        csrf_token: this.getCsrfToken()
+                        csrf_token: csrfToken
                     })
                 });
 
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.error || `Server responded with HTTP ${response.status}`);
+                }
+
                 const resData = await response.json();
 
+                // Step 8: Verify database confirmation
                 if (resData.success && resData.verified) {
-                    this.isSubscribed = true;
+                    this.isServerVerified = true;
                     this.deviceRole = userType;
-                    this.currentEndpoint = subscription.endpoint;
-                    this.updateUIState();
-                    return { success: true, subscription_id: resData.subscription_id };
+                    this.subscriptionId = resData.subscription_id;
+                    this.lastError = null;
+                    this.setState(PushState.DEVICE_ENROLLED);
+
+                    localStorage.setItem('na_push_enrolled', '1');
+                    sessionStorage.setItem('na_push_prompt_dismissed', '1');
+
+                    return { 
+                        success: true, 
+                        subscription_id: resData.subscription_id, 
+                        role: userType 
+                    };
                 } else {
-                    throw new Error(resData.error || 'Server could not verify device subscription in database');
+                    throw new Error(resData.error || 'Server could not verify subscription in database.');
                 }
+
             } catch (err) {
-                console.error('[PWA] Enrollment error:', err);
-                this.updateUIState();
+                console.error('[PWA] Enrollment failed:', err);
+                this.isServerVerified = false;
+                this.setState(PushState.ENROLLMENT_FAILED, err.message);
                 return { success: false, error: err.message };
+            }
+        },
+
+        // Repair / Re-sync Subscription: cleanly removes old subscription and creates fresh one
+        repairSubscription: async function (userType = 'admin') {
+            try {
+                this.setState(PushState.SUBSCRIPTION_PENDING);
+                const reg = await navigator.serviceWorker.ready;
+                const sub = await reg.pushManager.getSubscription();
+                if (sub) {
+                    await sub.unsubscribe().catch(() => {});
+                }
+                this.currentEndpoint = null;
+                this.isSubscribed = false;
+                this.isServerVerified = false;
+
+                const result = await this.subscribeDevice(userType);
+                if (result.success) {
+                    alert('✓ Subscription repaired and verified with database!');
+                } else {
+                    alert('✕ Subscription repair failed: ' + (result.error || 'Unknown error'));
+                }
+                return result;
+            } catch (e) {
+                alert('Error repairing subscription: ' + e.message);
+                this.setState(PushState.ENROLLMENT_FAILED, e.message);
+                return { success: false, error: e.message };
             }
         },
 
         // Unsubscribe device
         unsubscribeDevice: async function () {
             try {
-                const reg = this.swRegistration || await navigator.serviceWorker.ready;
+                const reg = await navigator.serviceWorker.ready;
                 const subscription = await reg.pushManager.getSubscription();
                 if (subscription) {
                     const endpoint = subscription.endpoint;
@@ -321,9 +453,12 @@
                     });
                 }
                 this.isSubscribed = false;
+                this.isServerVerified = false;
                 this.deviceRole = null;
                 this.currentEndpoint = null;
-                this.updateUIState();
+                this.subscriptionId = null;
+                this.setState(PushState.PERMISSION_GRANTED);
+                localStorage.removeItem('na_push_enrolled');
                 return { success: true };
             } catch (err) {
                 console.error('[PWA] Unsubscribe error:', err);
@@ -331,10 +466,10 @@
             }
         },
 
-        // Test alert on current device
+        // Test alert on current device with detailed feedback
         testCurrentDevice: async function (role = 'admin') {
             if (!this.currentEndpoint) {
-                const reg = this.swRegistration || await navigator.serviceWorker.ready;
+                const reg = await navigator.serviceWorker.ready;
                 const sub = await reg?.pushManager.getSubscription();
                 if (sub) {
                     this.currentEndpoint = sub.endpoint;
@@ -343,10 +478,17 @@
 
             if (!this.currentEndpoint) {
                 alert('No push subscription found on this device. Please enroll first.');
-                return { success: false };
+                return { success: false, error: 'No subscription' };
+            }
+
+            const feedbackEl = document.getElementById('admin-device-test-result');
+            if (feedbackEl) {
+                feedbackEl.innerHTML = '<span class="text-amber-600 animate-pulse">Dispatching encrypted test alert via push gateway...</span>';
+                feedbackEl.classList.remove('hidden');
             }
 
             try {
+                const startTime = performance.now();
                 const res = await fetch('/api/push/test-device', {
                     method: 'POST',
                     headers: {
@@ -359,26 +501,237 @@
                         csrf_token: this.getCsrfToken()
                     })
                 });
+
+                const latencyMs = Math.round(performance.now() - startTime);
                 const data = await res.json();
+
+                this.lastPushResult = {
+                    http_code: data.http_code || res.status,
+                    latency_ms: data.latency_ms || latencyMs,
+                    success: !!data.success,
+                    timestamp: new Date().toLocaleTimeString(),
+                    error: data.error || null,
+                    endpoint_host: data.endpoint_host || (this.currentEndpoint ? new URL(this.currentEndpoint).hostname : '')
+                };
+
                 if (data.success) {
-                    alert('✓ ' + (data.message || 'Test push alert sent to this device!'));
-                    return { success: true };
+                    const msg = `✓ Success: Push alert received (HTTP ${data.http_code || 201} via ${data.endpoint_host || 'gateway'}, ${data.latency_ms || latencyMs}ms). Check your screen!`;
+                    if (feedbackEl) {
+                        feedbackEl.innerHTML = `<span class="text-emerald-700 font-bold">${escapeHtml(msg)}</span>`;
+                    }
+                    this.updateUIState();
+                    alert(msg);
+                    return { success: true, ...data };
                 } else {
-                    alert('✕ ' + (data.error || 'Test notification failed'));
-                    return { success: false, error: data.error };
+                    if (data.expired) {
+                        this.setState(PushState.SUBSCRIPTION_EXPIRED);
+                    }
+                    const errMsg = `✕ Delivery failed (HTTP ${data.http_code || 0}): ${data.error || 'Unknown gateway rejection'}`;
+                    if (feedbackEl) {
+                        feedbackEl.innerHTML = `<span class="text-red-600 font-bold">${escapeHtml(errMsg)}</span>`;
+                    }
+                    this.updateUIState();
+                    alert(errMsg);
+                    return { success: false, ...data };
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                const errMsg = '✕ Error: ' + e.message;
+                if (feedbackEl) {
+                    feedbackEl.innerHTML = `<span class="text-red-600 font-bold">${escapeHtml(errMsg)}</span>`;
+                }
+                alert(errMsg);
                 return { success: false, error: e.message };
             }
         },
 
-        // Alias for testCurrentDevice
         sendTestToCurrentDevice: function (role = 'customer') {
             return this.testCurrentDevice(role);
         },
 
-        // Check if post-auth (login/register) custom popup should appear
+        // Collect full live diagnostics
+        getDiagnostics: function () {
+            const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+            const swActive = navigator.serviceWorker?.controller != null;
+            const swRegistered = this.swRegistration != null;
+            const pushMgr = ('PushManager' in window);
+
+            let host = 'None';
+            if (this.currentEndpoint) {
+                try { host = new URL(this.currentEndpoint).hostname; } catch (e) { host = 'Invalid URL'; }
+            }
+
+            return {
+                permission: perm,
+                serviceWorker: swActive ? 'Active (Controlling Page)' : (swRegistered ? 'Registered (Waiting/Installing)' : 'Inactive / Ready'),
+                pushManager: pushMgr ? 'Available' : 'Unavailable',
+                browserSubscription: this.currentEndpoint ? `Active (${host})` : 'None',
+                serverEnrollment: this.isServerVerified ? `Enrolled (ID: #${this.subscriptionId || 'Active'})` : (this.currentEndpoint ? 'Token exists, not saved in DB' : 'Not Enrolled'),
+                fsmState: this.currentState,
+                deviceRole: this.deviceRole || 'None',
+                vapidStatus: this.vapidPublicKey ? 'Configured (NIST P-256)' : 'Ready to load',
+                lastPush: this.lastPushResult
+            };
+        },
+
+        // Update Admin & General UI Elements based on finite state machine
+        updateUIState: function () {
+            const state = this.currentState;
+            const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+            const isEnrolledAdmin = (state === PushState.DEVICE_ENROLLED && this.deviceRole === 'admin');
+
+            // Admin Status Badge & Text
+            const adminStatusBadge = document.getElementById('admin-enroll-status-badge');
+            const adminStatusText = document.getElementById('admin-enroll-status-text');
+            const adminEnrollBtn = document.getElementById('admin-enroll-btn');
+            const adminTestBtn = document.getElementById('admin-device-test-btn');
+            const adminUnenrollBtn = document.getElementById('admin-unenroll-btn');
+            const adminRepairBtn = document.getElementById('admin-repair-btn');
+
+            if (adminStatusBadge) {
+                switch (state) {
+                    case PushState.DEVICE_ENROLLED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1.5 shadow-xs"><span class="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span> Enrolled &amp; Active (Admin ID: #${this.subscriptionId || 'Verified'})</span>`;
+                        break;
+                    case PushState.PERMISSION_GRANTED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-600"></span> Permission Granted (Device Not Subscribed)</span>`;
+                        break;
+                    case PushState.DEVICE_NOT_SUBSCRIBED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-600"></span> Device Token Found (Pending Server Verification)</span>`;
+                        break;
+                    case PushState.SUBSCRIPTION_PENDING:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 flex items-center gap-1.5 animate-pulse"><svg class="animate-spin h-3.5 w-3.5 text-amber-600" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Enrolling Device...</span>`;
+                        break;
+                    case PushState.SUBSCRIPTION_SAVED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">Subscription Saved (Verifying in DB...)</span>`;
+                        break;
+                    case PushState.SUBSCRIPTION_EXPIRED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">Subscription Expired (Gateway 410)</span>`;
+                        break;
+                    case PushState.ENROLLMENT_FAILED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800">Enrollment Failed (${escapeHtml(this.lastError || 'Server error')})</span>`;
+                        break;
+                    case PushState.PERMISSION_DENIED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">Permission Blocked in Browser</span>`;
+                        break;
+                    case PushState.UNSUPPORTED:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-700">Push Unsupported</span>`;
+                        break;
+                    default:
+                        adminStatusBadge.innerHTML = `<span class="px-3 py-1 rounded-full text-xs font-bold bg-white/20 text-emerald-100">Permission Not Requested</span>`;
+                        break;
+                }
+            }
+
+            if (adminStatusText) {
+                switch (state) {
+                    case PushState.DEVICE_ENROLLED:
+                        adminStatusText.textContent = 'This browser is enrolled and verified in the database. You will receive real-time order alerts directly on this screen.';
+                        break;
+                    case PushState.PERMISSION_GRANTED:
+                        adminStatusText.textContent = 'Notification permission is already granted in your browser, but this device is not yet subscribed to push service. Click "Activate Admin Push Subscription" to connect.';
+                        break;
+                    case PushState.DEVICE_NOT_SUBSCRIBED:
+                        adminStatusText.textContent = 'A push subscription exists in this browser, but is not verified as Admin in the database. Click "Activate Admin Subscription" to save it.';
+                        break;
+                    case PushState.SUBSCRIPTION_PENDING:
+                        adminStatusText.textContent = 'Requesting browser PushManager subscription and synchronizing with server database...';
+                        break;
+                    case PushState.SUBSCRIPTION_EXPIRED:
+                        adminStatusText.textContent = 'The push gateway reported this subscription has expired or was revoked. Click "Renew Subscription" to get a fresh token.';
+                        break;
+                    case PushState.ENROLLMENT_FAILED:
+                        adminStatusText.textContent = `Server enrollment failed: ${this.lastError || 'Unable to register device'}. Click "Retry Enrollment" to try again.`;
+                        break;
+                    case PushState.PERMISSION_DENIED:
+                        adminStatusText.textContent = 'Notifications are blocked in your browser site settings. Click "Unblock Guide" to enable notifications in your browser address bar.';
+                        break;
+                    default:
+                        adminStatusText.textContent = 'Enroll this device to receive instant push alerts whenever a customer places an order or completes payment.';
+                        break;
+                }
+            }
+
+            if (adminEnrollBtn) {
+                if (isEnrolledAdmin) {
+                    adminEnrollBtn.style.display = 'none';
+                } else {
+                    adminEnrollBtn.style.display = 'inline-flex';
+                    adminEnrollBtn.disabled = (state === PushState.SUBSCRIPTION_PENDING);
+
+                    if (state === PushState.PERMISSION_DENIED) {
+                        adminEnrollBtn.textContent = 'Unblock Guide';
+                        adminEnrollBtn.onclick = () => this.showBlockedPermissionModal();
+                    } else if (state === PushState.PERMISSION_GRANTED || state === PushState.DEVICE_NOT_SUBSCRIBED) {
+                        adminEnrollBtn.textContent = 'Activate Admin Subscription';
+                        adminEnrollBtn.onclick = () => this.subscribeDevice('admin');
+                    } else if (state === PushState.ENROLLMENT_FAILED) {
+                        adminEnrollBtn.textContent = 'Retry Admin Enrollment';
+                        adminEnrollBtn.onclick = () => this.subscribeDevice('admin');
+                    } else if (state === PushState.SUBSCRIPTION_EXPIRED) {
+                        adminEnrollBtn.textContent = 'Renew Subscription';
+                        adminEnrollBtn.onclick = () => this.subscribeDevice('admin');
+                    } else if (state === PushState.SUBSCRIPTION_PENDING) {
+                        adminEnrollBtn.textContent = 'Enrolling Device...';
+                    } else {
+                        adminEnrollBtn.textContent = 'Enrol Current Admin Device';
+                        adminEnrollBtn.onclick = () => this.subscribeDevice('admin');
+                    }
+                }
+            }
+
+            if (adminTestBtn) {
+                adminTestBtn.style.display = isEnrolledAdmin ? 'inline-flex' : 'none';
+            }
+
+            if (adminUnenrollBtn) {
+                adminUnenrollBtn.style.display = (this.isSubscribed || isEnrolledAdmin) ? 'inline-flex' : 'none';
+            }
+
+            if (adminRepairBtn) {
+                adminRepairBtn.style.display = (perm === 'granted' || this.isSubscribed) ? 'inline-flex' : 'none';
+            }
+
+            // Live Diagnostics Card Updating in Admin Notifications
+            this.updateDiagnosticsUI();
+
+            // Centralized Modal & Auth prompt updates
+            this.updateCenterModalState();
+        },
+
+        updateDiagnosticsUI: function () {
+            const diag = this.getDiagnostics();
+
+            const permEl = document.getElementById('diag-val-permission');
+            const swEl = document.getElementById('diag-val-sw');
+            const pushEl = document.getElementById('diag-val-push');
+            const subEl = document.getElementById('diag-val-sub');
+            const dbEl = document.getElementById('diag-val-db');
+            const fsmEl = document.getElementById('diag-val-fsm');
+            const lastPushEl = document.getElementById('diag-val-last-push');
+
+            if (permEl) {
+                permEl.textContent = diag.permission;
+                permEl.className = 'font-mono text-xs ' + (diag.permission === 'granted' ? 'text-emerald-600 font-bold' : (diag.permission === 'denied' ? 'text-red-600 font-bold' : 'text-amber-600'));
+            }
+            if (swEl) swEl.textContent = diag.serviceWorker;
+            if (pushEl) pushEl.textContent = diag.pushManager;
+            if (subEl) subEl.textContent = diag.browserSubscription;
+            if (dbEl) {
+                dbEl.textContent = diag.serverEnrollment;
+                dbEl.className = 'font-mono text-xs ' + (this.isServerVerified ? 'text-emerald-600 font-bold' : 'text-amber-600');
+            }
+            if (fsmEl) fsmEl.textContent = diag.fsmState;
+            if (lastPushEl) {
+                if (diag.lastPush) {
+                    lastPushEl.textContent = `HTTP ${diag.lastPush.http_code} (${diag.lastPush.latency_ms}ms) at ${diag.lastPush.timestamp}`;
+                    lastPushEl.className = 'font-mono text-xs ' + (diag.lastPush.success ? 'text-emerald-600 font-bold' : 'text-red-600 font-bold');
+                } else {
+                    lastPushEl.textContent = 'None in this session';
+                }
+            }
+        },
+
+        // Post-auth prompt check
         checkPostAuthPrompt: function () {
             const modal = document.getElementById('pwa-auth-notif-modal');
             if (!modal) return;
@@ -386,28 +739,23 @@
             const isPostAuth = modal.dataset.postAuth === 'true';
             if (!isPostAuth) return;
 
-            // If already dismissed in this session, do not show repeatedly
             if (sessionStorage.getItem('na_push_prompt_dismissed') === '1') {
                 return;
             }
 
-            // If user already granted permission AND has active subscription, do not show
-            if (Notification.permission === 'granted' && this.isSubscribed) {
+            if (Notification.permission === 'granted' && this.isSubscribed && this.isServerVerified) {
                 return;
             }
 
-            // If permission was already permanently denied in browser, do not show native prompt repeatedly
             if (Notification.permission === 'denied') {
                 return;
             }
 
-            // Show custom popup modal
             setTimeout(() => {
                 modal.classList.remove('hidden');
             }, 600);
         },
 
-        // Post-auth "Allow Notifications" handler
         handleAuthPromptAllow: async function () {
             const btn = document.getElementById('pwa-auth-allow-btn');
             const txt = document.getElementById('pwa-auth-allow-text');
@@ -436,7 +784,7 @@
                     if (modal) modal.classList.add('hidden');
                 }, 1400);
             } else {
-                if (txt) txt.textContent = 'Retry Permission';
+                if (txt) txt.textContent = 'Retry Subscription';
                 if (fb) {
                     fb.textContent = '✕ ' + (result.error || 'Failed to enable notifications. Please try again.');
                     fb.className = 'my-3 p-2.5 rounded-xl text-xs bg-red-50 text-red-800 border border-red-200 block';
@@ -445,22 +793,18 @@
             }
         },
 
-        // Post-auth "Not Now" handler
         handleAuthPromptDismiss: function () {
             const modal = document.getElementById('pwa-auth-notif-modal');
             if (modal) modal.classList.add('hidden');
-            // Dismiss for this session only; can be offered again on later login
             sessionStorage.setItem('na_push_prompt_dismissed', '1');
         },
 
-        // Open centralized notification center modal (for customer or admin)
         openNotificationCenter: function (role = 'customer') {
             const modal = document.getElementById('pwa-notification-center-modal') || document.getElementById('pwa-center-modal');
             if (modal) {
                 this.updateCenterModalState();
                 modal.classList.remove('hidden');
             } else {
-                // If modal not on page, perform direct subscription
                 this.subscribeDevice(role);
             }
         },
@@ -477,6 +821,7 @@
             const helpBox = document.getElementById('pwa-center-blocked-help') || document.getElementById('pwa-auth-blocked-help');
 
             const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+            const state = this.currentState;
 
             if (statusBadge) {
                 if (!this.isSupported()) {
@@ -485,9 +830,12 @@
                 } else if (perm === 'denied') {
                     statusBadge.textContent = 'Blocked in Browser Settings';
                     statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 inline-block';
-                } else if (this.isSubscribed) {
+                } else if (state === PushState.DEVICE_ENROLLED) {
                     statusBadge.textContent = 'Active on this Device (' + (this.deviceRole || 'customer') + ')';
                     statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 inline-block';
+                } else if (perm === 'granted') {
+                    statusBadge.textContent = 'Permission Granted (Click to Connect)';
+                    statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 inline-block';
                 } else {
                     statusBadge.textContent = 'Not Enabled on this Device';
                     statusBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 inline-block';
@@ -499,19 +847,19 @@
                     toggleBtn.textContent = 'Permissions Blocked — View Guide';
                     toggleBtn.className = 'w-full sm:w-auto bg-red-50 hover:bg-red-100 text-red-800 border border-red-200 font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer';
                     toggleBtn.onclick = () => this.showBlockedPermissionModal();
-                } else if (this.isSubscribed) {
+                } else if (state === PushState.DEVICE_ENROLLED) {
                     toggleBtn.textContent = 'Disable on this Device';
                     toggleBtn.className = 'w-full sm:w-auto bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer';
                     toggleBtn.onclick = () => this.unsubscribeDevice();
                 } else {
-                    toggleBtn.textContent = 'Enable Notifications';
+                    toggleBtn.textContent = (perm === 'granted') ? 'Connect Device to Push' : 'Enable Notifications';
                     toggleBtn.className = 'w-full sm:w-auto bg-[#235d3a] hover:bg-[#1b4a2e] text-white font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer';
                     toggleBtn.onclick = () => this.subscribeDevice('customer');
                 }
             }
 
             if (testBtn) {
-                testBtn.style.display = this.isSubscribed ? 'inline-flex' : 'none';
+                testBtn.style.display = (state === PushState.DEVICE_ENROLLED) ? 'inline-flex' : 'none';
             }
 
             if (helpBox) {
@@ -519,64 +867,6 @@
             }
         },
 
-        // Update Admin & General UI Elements
-        updateUIState: function () {
-            // Admin Device Enrollment Elements in /admin/notifications
-            const adminStatusBadge = document.getElementById('admin-enroll-status-badge');
-            const adminStatusText = document.getElementById('admin-enroll-status-text');
-            const adminEnrollBtn = document.getElementById('admin-enroll-btn');
-            const adminTestBtn = document.getElementById('admin-device-test-btn');
-            const adminUnenrollBtn = document.getElementById('admin-unenroll-btn');
-
-            const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
-            const isEnrolledAdmin = this.isSubscribed && this.deviceRole === 'admin';
-
-            if (adminStatusBadge) {
-                if (!this.isSupported()) {
-                    adminStatusBadge.innerHTML = '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-700">Push Unsupported</span>';
-                } else if (perm === 'denied') {
-                    adminStatusBadge.innerHTML = '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">Permission Blocked in Browser</span>';
-                } else if (isEnrolledAdmin) {
-                    adminStatusBadge.innerHTML = '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span> Enrolled & Verified Active</span>';
-                } else if (this.isSubscribed) {
-                    adminStatusBadge.innerHTML = '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800">Subscribed (as ' + (this.deviceRole || 'customer') + ')</span>';
-                } else {
-                    adminStatusBadge.innerHTML = '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">Not Enrolled</span>';
-                }
-            }
-
-            if (adminStatusText) {
-                if (perm === 'denied') {
-                    adminStatusText.textContent = 'Notifications are blocked in your browser site settings. Click "Unblock Guide" to enable.';
-                } else if (isEnrolledAdmin) {
-                    adminStatusText.textContent = 'This browser is enrolled and verified in the database. You will receive real-time order alerts directly on this screen.';
-                } else {
-                    adminStatusText.textContent = 'This device is not enrolled for admin alerts. Click "Enrol Current Device" to receive order notifications.';
-                }
-            }
-
-            if (adminEnrollBtn) {
-                if (isEnrolledAdmin) {
-                    adminEnrollBtn.style.display = 'none';
-                } else {
-                    adminEnrollBtn.style.display = 'inline-flex';
-                    adminEnrollBtn.textContent = (perm === 'denied') ? 'Unblock & Enrol' : 'Enrol Current Admin Device';
-                }
-            }
-
-            if (adminTestBtn) {
-                adminTestBtn.style.display = isEnrolledAdmin ? 'inline-flex' : 'none';
-            }
-
-            if (adminUnenrollBtn) {
-                adminUnenrollBtn.style.display = isEnrolledAdmin ? 'inline-flex' : 'none';
-            }
-
-            // Update Center modal if open
-            this.updateCenterModalState();
-        },
-
-        // Helper: Show blocked permission modal with instructions
         showBlockedPermissionModal: function () {
             const modal = document.getElementById('pwa-permission-blocked-modal');
             if (modal) {
@@ -591,7 +881,6 @@
             if (modal) modal.classList.add('hidden');
         },
 
-        // Prompt user to install native PWA on Android/Chrome
         promptInstall: async function () {
             if (this.deferredPrompt) {
                 this.deferredPrompt.prompt();

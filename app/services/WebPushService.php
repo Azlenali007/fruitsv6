@@ -114,7 +114,8 @@ class WebPushService {
         $headers = [
             'TTL: ' . $ttl,
             'Urgency: high',
-            'Authorization: vapid t=' . $jwt . ', k=' . $keys['publicKey']
+            'Authorization: vapid t=' . $jwt . ', k=' . $keys['publicKey'],
+            'Crypto-Key: p256ecdsa=' . $keys['publicKey']
         ];
 
         if (!empty($p256dh) && !empty($auth)) {
@@ -137,9 +138,9 @@ class WebPushService {
         $host = parse_url($endpoint, PHP_URL_HOST);
         if ($host === 'test-push-service.local' || str_ends_with((string)$host, '.test')) {
             if (str_contains($endpoint, 'expired')) {
-                return ['success' => false, 'http_code' => 410, 'error' => 'Simulated 410 Gone (Subscription expired)', 'expired' => true];
+                return ['success' => false, 'http_code' => 410, 'error' => 'Simulated 410 Gone (Subscription expired)', 'expired' => true, 'response_body' => 'Subscription expired'];
             }
-            return ['success' => true, 'http_code' => 201, 'error' => null, 'expired' => false];
+            return ['success' => true, 'http_code' => 201, 'error' => null, 'expired' => false, 'response_body' => 'Created'];
         }
 
         // Execute HTTP request to push service
@@ -149,38 +150,57 @@ class WebPushService {
             CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 12,
+            CURLOPT_CONNECTTIMEOUT => 6,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_HEADER => true,
         ]);
 
+        $startTime = microtime(true);
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $latencyMs = (int)round((microtime(true) - $startTime) * 1000);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $headerSize = (int)curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         $curlError = curl_error($ch);
         curl_close($ch);
 
         if ($response === false) {
-            return ['success' => false, 'http_code' => 0, 'error' => 'cURL error: ' . $curlError, 'expired' => false];
+            error_log("WebPush cURL failure to {$endpoint}: {$curlError}");
+            return [
+                'success' => false,
+                'http_code' => 0,
+                'latency_ms' => $latencyMs,
+                'error' => 'cURL error: ' . $curlError,
+                'response_body' => null,
+                'expired' => false
+            ];
         }
+
+        $responseHeaders = substr($response, 0, $headerSize);
+        $responseBody = trim(substr($response, $headerSize));
 
         // Check for expired or revoked subscriptions (HTTP 404 Not Found or 410 Gone)
         $isExpired = ($httpCode === 404 || $httpCode === 410);
 
-        // HTTP 201 Created is the standard successful delivery response
+        // HTTP 201 Created is the standard successful delivery response (200 OK / 202 Accepted also indicate success)
         $isSuccess = ($httpCode === 201 || $httpCode === 200 || $httpCode === 202);
 
         $errorMsg = null;
         if (!$isSuccess) {
-            $errorMsg = "Push service returned HTTP {$httpCode}";
-            if ($isExpired) {
-                $errorMsg .= " (Subscription expired or unsubscribed)";
+            $errorMsg = "Push service HTTP {$httpCode}";
+            if (!empty($responseBody)) {
+                $errorMsg .= ": " . $responseBody;
+            } elseif ($isExpired) {
+                $errorMsg .= " (Subscription expired or unsubscribed on push gateway)";
             }
+            error_log("WebPush error dispatching to {$host} [HTTP {$httpCode}]: {$responseBody}");
         }
 
         return [
             'success' => $isSuccess,
             'http_code' => $httpCode,
+            'latency_ms' => $latencyMs,
+            'response_body' => $responseBody,
             'error' => $errorMsg,
             'expired' => $isExpired
         ];
@@ -197,8 +217,8 @@ class WebPushService {
             'sub' => $keys['subject'] ?? 'mailto:support@nifruitjaora.shop'
         ];
 
-        $b64Header = self::base64UrlEncode(json_encode($header));
-        $b64Claims = self::base64UrlEncode(json_encode($claims));
+        $b64Header = self::base64UrlEncode(json_encode($header, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $b64Claims = self::base64UrlEncode(json_encode($claims, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         $dataToSign = $b64Header . '.' . $b64Claims;
 
         $privKeyResource = openssl_pkey_get_private($keys['privatePem'] ?? '');

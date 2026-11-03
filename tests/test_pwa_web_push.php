@@ -343,6 +343,106 @@ $expCount = (int)$stmtExpCheck->fetchColumn();
 $stmtExpCheck->closeCursor();
 pwa_it("Expired subscription auto-pruning purges stale endpoints from database", $cleanupDone === true && $expCount === 0);
 
+// -------------------------------------------------------------
+// Test 16: VAPID Claims Formatting & RFC 8291 Cryptographic Verification
+// -------------------------------------------------------------
+$reflector = new ReflectionClass('WebPushService');
+$jwtMethod = $reflector->getMethod('createVapidJwt');
+$jwtMethod->setAccessible(true);
+$vapidKeys = WebPushService::getKeys();
+$rawJwt = $jwtMethod->invoke(null, 'https://fcm.googleapis.com', $vapidKeys);
+$jwtParts = explode('.', $rawJwt);
+$jwtClaimsJson = WebPushService::base64UrlDecode($jwtParts[1]);
+$claimsDecoded = json_decode($jwtClaimsJson, true);
+
+pwa_it("VAPID JWT audience claim is unescaped URL 'https://fcm.googleapis.com'", 
+    ($claimsDecoded['aud'] ?? '') === 'https://fcm.googleapis.com' && !str_contains($jwtClaimsJson, '\\/')
+);
+
+// Round-trip RFC 8291 (aes128gcm) Encryption & Decryption
+$testClientRes = openssl_pkey_new(['curve_name' => 'prime256v1', 'private_key_type' => OPENSSL_KEYTYPE_EC]);
+$testClientDetails = openssl_pkey_get_details($testClientRes);
+$testClientPub = chr(4) . str_pad($testClientDetails['ec']['x'], 32, chr(0), STR_PAD_LEFT) . str_pad($testClientDetails['ec']['y'], 32, chr(0), STR_PAD_LEFT);
+$testClientAuth = random_bytes(16);
+$testP256dhB64 = WebPushService::base64UrlEncode($testClientPub);
+$testAuthB64 = WebPushService::base64UrlEncode($testClientAuth);
+$testPlaintext = json_encode(['title' => 'Fresh Coconut Order #1050', 'body' => 'Your order is out for delivery!']);
+
+$encMethod = $reflector->getMethod('encryptPayload');
+$encMethod->setAccessible(true);
+$encResult = $encMethod->invoke(null, $testPlaintext, $testP256dhB64, $testAuthB64);
+$ciphertextRec = $encResult['ciphertext'];
+
+pwa_it("RFC 8291 AES-128-GCM ciphertext record created successfully", strlen($ciphertextRec) > 86);
+
+// Decrypt ciphertext using client EC private key
+$recSalt = substr($ciphertextRec, 0, 16);
+$recIdLen = ord($ciphertextRec[20]);
+$recServerPub = substr($ciphertextRec, 21, $recIdLen);
+$recContent = substr($ciphertextRec, 21 + $recIdLen);
+$recTag = substr($recContent, -16);
+$recEncData = substr($recContent, 0, -16);
+
+$pemMethod = $reflector->getMethod('ecPublicKeyToPem');
+$pemMethod->setAccessible(true);
+$serverPem = $pemMethod->invoke(null, $recServerPub);
+$serverKeyRes = openssl_pkey_get_public($serverPem);
+
+$sharedSecret = openssl_pkey_derive($serverKeyRes, $testClientRes);
+$prkKey = hash_hmac('sha256', $sharedSecret, $testClientAuth, true);
+$keyInfo = "WebPush: info\x00" . $testClientPub . $recServerPub;
+$ikm = hash_hmac('sha256', $keyInfo . "\x01", $prkKey, true);
+$prk = hash_hmac('sha256', $ikm, $recSalt, true);
+$cek = substr(hash_hmac('sha256', "Content-Encoding: aes128gcm\x00\x01", $prk, true), 0, 16);
+$nonce = substr(hash_hmac('sha256', "Content-Encoding: nonce\x00\x01", $prk, true), 0, 12);
+
+$decrypted = openssl_decrypt($recEncData, 'aes-128-gcm', $cek, OPENSSL_RAW_DATA, $nonce, $recTag);
+$cleanDecrypted = substr($decrypted, 0, -1); // strip \x02 delimiter
+$isCryptoValid = ($cleanDecrypted === $testPlaintext);
+pwa_it("RFC 8291 AES-128-GCM encryption & round-trip decryption verified", $isCryptoValid);
+
+// -------------------------------------------------------------
+// Test 17: Finite State Machine & Admin Diagnostics Panel
+// -------------------------------------------------------------
+$pwaJsContent = file_get_contents(__DIR__ . '/../public/assets/js/pwa-push.js');
+$fsmStates = [
+    'UNSUPPORTED',
+    'PERMISSION_NOT_REQUESTED',
+    'PERMISSION_DENIED',
+    'PERMISSION_GRANTED',
+    'DEVICE_NOT_SUBSCRIBED',
+    'SUBSCRIPTION_PENDING',
+    'SUBSCRIPTION_SAVED',
+    'DEVICE_ENROLLED',
+    'SUBSCRIPTION_EXPIRED',
+    'ENROLLMENT_FAILED'
+];
+$allStatesFound = true;
+foreach ($fsmStates as $s) {
+    if (!str_contains($pwaJsContent, $s)) {
+        $allStatesFound = false;
+        break;
+    }
+}
+pwa_it("pwa-push.js defines complete 10-state finite state machine (FSM)", $allStatesFound);
+
+$adminNotifView = file_get_contents(__DIR__ . '/../app/views/admin/notifications.php');
+$hasDiagnosticsPanel = strpos($adminNotifView, 'Live Web Push Diagnostics Panel') !== false &&
+                       strpos($adminNotifView, 'diag-val-permission') !== false &&
+                       strpos($adminNotifView, 'diag-val-sw') !== false &&
+                       strpos($adminNotifView, 'diag-val-push') !== false &&
+                       strpos($adminNotifView, 'diag-val-db') !== false &&
+                       strpos($adminNotifView, 'admin-repair-btn') !== false;
+pwa_it("Admin Notifications view includes live diagnostics panel & repair action", $hasDiagnosticsPanel);
+
+// Test sendTestToDevice response telemetry
+$diagTestEp = 'https://test-push-service.local/diag-test-' . bin2hex(random_bytes(6));
+NotificationService::subscribe($diagTestEp, $dummyP256dh, $dummyAuth, 'admin', 1, 'Admin Chrome');
+$diagTestRes = NotificationService::sendTestToDevice($diagTestEp, 'admin');
+pwa_it("sendTestToDevice returns http_code, latency_ms and endpoint_host", 
+    isset($diagTestRes['http_code']) && isset($diagTestRes['latency_ms']) && isset($diagTestRes['endpoint_host'])
+);
+
 // Clean up test customer & test subscriptions
 $pdo->exec("DELETE FROM `push_subscriptions` WHERE `endpoint` LIKE 'https://test-push-service.local/%'");
 $pdo->exec("DELETE FROM `customers` WHERE `phone` LIKE '%{$testPhone}%'");

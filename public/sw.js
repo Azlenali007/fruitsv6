@@ -10,7 +10,7 @@
  * 5. Safe service worker update lifecycle
  */
 
-const CACHE_NAME = 'na-fruits-v1.2';
+const CACHE_NAME = 'na-fruits-v1.3';
 const OFFLINE_FALLBACK_URL = '/offline.html';
 
 // Assets to precache immediately on install
