@@ -128,8 +128,7 @@ $expectedTables = [
     'customer_login_attempts', 'coupons', 'coupon_usage',
     'payment_transactions', 'payment_webhook_events',
     'delivery_areas', 'invoices', 'invoice_sequences',
-    'push_subscriptions', 'notifications', 'notification_deliveries',
-    'customer_notification_preferences', 'notification_dedup'
+    'push_subscriptions', 'notification_history', 'notification_deliveries'
 ];
 
 $allTablesExist = true;

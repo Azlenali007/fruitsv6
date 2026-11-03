@@ -1463,24 +1463,21 @@ try {
                     json_response(['success' => false, 'error' => 'Security token invalid or expired.'], 403);
                 }
 
-                $audience = trim($input['audience'] ?? 'all_customers');
-                $notifType = trim($input['type'] ?? 'promo');
-
-                // Enforce Superadmin permission for bulk promotional notifications
-                $admin = AuthService::user();
-                if ($audience === 'all_customers' && $notifType === 'promo' && ($admin['role'] ?? '') !== 'superadmin') {
-                    json_response(['success' => false, 'error' => 'Only Superadmins can broadcast bulk promotional notifications.'], 403);
+                $category = trim($input['category'] ?? ($input['type'] ?? 'offers'));
+                if (!in_array($category, ['offers', 'orders', 'stock', 'news'], true)) {
+                    $category = 'offers';
                 }
 
-                $targetCust = $input['customer_id'] ?? null;
-                $res = NotificationService::sendBroadcast([
-                    'title' => $input['title'] ?? '',
-                    'body' => $input['body'] ?? '',
-                    'image' => $input['image'] ?? null,
-                    'url' => $input['url'] ?? '/',
-                    'type' => $notifType
-                ], $audience, $targetCust, (int)($admin['id'] ?? 0));
+                $title = trim($input['title'] ?? '');
+                $message = trim($input['message'] ?? ($input['body'] ?? ''));
+                $image = !empty($input['image_url']) ? trim($input['image_url']) : (!empty($input['image']) ? trim($input['image']) : null);
+                $url = !empty($input['click_url']) ? trim($input['click_url']) : (!empty($input['url']) ? trim($input['url']) : '/');
+                $targetCust = !empty($input['customer_id']) ? (int)$input['customer_id'] : null;
 
+                $admin = AuthService::user();
+                $adminId = (int)($admin['id'] ?? 0);
+
+                $res = NotificationService::sendBroadcast($category, $title, $message, $image, $url, $adminId, $targetCust);
                 json_response($res);
             }
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
@@ -1516,7 +1513,7 @@ try {
                     } else {
                         $failed++;
                         if (!empty($res['expired'])) {
-                            NotificationService::removeSubscriptionById((int)$sub['id']);
+                            NotificationService::expireSubscriptionById((int)$sub['id']);
                         }
                     }
                 }

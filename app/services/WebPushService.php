@@ -95,6 +95,15 @@ class WebPushService {
         // Intercept local test / mock endpoints during automated test runs
         $host = strtolower($parsed['host'] ?? '');
         if (str_ends_with($host, '.local') || str_starts_with($host, 'test-') || $host === 'localhost' || str_contains($endpoint, 'test-push') || str_contains($endpoint, 'mock-push')) {
+            if (str_contains($endpoint, 'expired')) {
+                return [
+                    'success' => false,
+                    'http_code' => 410,
+                    'error' => 'Subscription expired or unsubscribed on push gateway',
+                    'expired' => true,
+                    'response_body' => '410 Gone'
+                ];
+            }
             return [
                 'success' => true,
                 'http_code' => 201,

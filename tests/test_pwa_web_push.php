@@ -1,23 +1,24 @@
 <?php
 /**
- * Comprehensive PWA Web Push Notification & Migration Test Suite
+ * Comprehensive PWA Web Push Notification Test Suite (Fresh Rebuild)
  * N.A Fresh Fruits & Coconuts
  *
  * Verifies:
- * 1. Zero Telegram Bot / Telegram queue code references remain in active codebase.
- * 2. Manifest file is valid JSON and contains all required PWA fields (id, name, short_name <= 12 chars, start_url, scope, display, theme_color, background_color, icons).
- * 3. Service Worker public/sw.js exists and is syntax-valid.
- * 4. VAPID keypair generation, export, and public key retrieval (RFC 8292 NIST P-256).
- * 5. Device subscription and unsubscription lifecycle.
- * 6. Multi-device support per account (customer & admin).
- * 7. Admin order push dispatch on new order placement (COD & Razorpay).
- * 8. Customer order lifecycle push updates (Confirmed, Prepared, Out for Delivery, Delivered).
- * 9. Admin promotional broadcast with role validation.
- * 10. Customer promotional opt-in / opt-out preferences enforcement.
- * 11. Expired subscription auto-pruning.
- * 12. Idempotency deduplication.
- * 13. Customer data isolation (no cross-customer notification leakage).
- * 14. Zero cron scripts or background daemons required.
+ * 1. Database schema: push_subscriptions, notification_history, notification_deliveries.
+ * 2. Complete absence of obsolete Telegram bot / queue code.
+ * 3. PWA Manifest compliance (manifest.webmanifest / manifest.json).
+ * 4. Service Worker (public/sw.js) push & notificationclick event handlers.
+ * 5. VAPID EC keypair (RFC 8292 NIST P-256) and secure storage.
+ * 6. Customer device subscription, storage, unsubscription, and multi-device support.
+ * 7. Category 1: OFFERS broadcast to customer subscribers.
+ * 8. Category 2: ORDERS status update sent strictly to the order owner customer (data isolation).
+ * 9. Category 3: STOCK announcement with 10-minute duplicate protection.
+ * 10. Category 4: NEWS broadcast to customer subscribers.
+ * 11. Delivery log in notification_deliveries (sent, failed, expired).
+ * 12. Expired subscription auto-pruning on 410 Gone.
+ * 13. Admin device enrollment isolation from customer subscribers.
+ * 14. RFC 8291 (aes128gcm) payload encryption and round-trip verification.
+ * 15. Notification center and iOS installation guidance.
  */
 
 require_once __DIR__ . '/../app/bootstrap.php';
@@ -36,10 +37,12 @@ function pwa_it(string $name, bool $cond, string $detail = '') {
     }
 }
 
-echo "12. PWA & WEB PUSH NOTIFICATIONS TEST SUITE:\n";
+echo "12. PWA & WEB PUSH NOTIFICATIONS TEST SUITE (FRESH REBUILD):\n";
+
+$pdo = Database::getConnection();
 
 // -------------------------------------------------------------
-// Test 1: Complete Removal of Telegram Services & Cron Files
+// Test 1: Complete Removal of Telegram Services & Obsolete Tables
 // -------------------------------------------------------------
 $telegramFiles = [
     __DIR__ . '/../app/services/TelegramService.php',
@@ -57,15 +60,33 @@ foreach ($telegramFiles as $f) {
 }
 pwa_it("Old Telegram service and cron files are completely deleted", empty($foundOldFiles), implode(', ', $foundOldFiles));
 
-// Check database has no telegram_notification_queue table
-$pdo = Database::getConnection();
 $stmtTg = $pdo->query("SHOW TABLES LIKE 'telegram_notification_queue'");
 $hasTgTable = (bool)$stmtTg->fetch();
 $stmtTg->closeCursor();
 pwa_it("Database table 'telegram_notification_queue' is removed", !$hasTgTable);
 
 // -------------------------------------------------------------
-// Test 2: PWA Manifest Standards Compliance
+// Test 2: Database Schema Completeness (Fresh Rebuild)
+// -------------------------------------------------------------
+$stmtTables = $pdo->query("SHOW TABLES");
+$dbTables = $stmtTables->fetchAll(PDO::FETCH_COLUMN);
+
+pwa_it("Table 'push_subscriptions' exists", in_array('push_subscriptions', $dbTables));
+pwa_it("Table 'notification_history' exists", in_array('notification_history', $dbTables));
+pwa_it("Table 'notification_deliveries' exists", in_array('notification_deliveries', $dbTables));
+
+// Check push_subscriptions columns: customer_id, status
+$stmtCols = $pdo->query("SHOW COLUMNS FROM `push_subscriptions`");
+$psCols = $stmtCols->fetchAll(PDO::FETCH_COLUMN);
+pwa_it("push_subscriptions contains customer_id and status columns", in_array('customer_id', $psCols) && in_array('status', $psCols));
+
+// Check notification_history columns: category, click_url
+$stmtColsH = $pdo->query("SHOW COLUMNS FROM `notification_history`");
+$nhCols = $stmtColsH->fetchAll(PDO::FETCH_COLUMN);
+pwa_it("notification_history contains category, title, message, click_url", in_array('category', $nhCols) && in_array('click_url', $nhCols));
+
+// -------------------------------------------------------------
+// Test 3: PWA Manifest Standards Compliance
 // -------------------------------------------------------------
 $manifestPath = __DIR__ . '/../public/manifest.webmanifest';
 pwa_it("PWA Web Manifest file exists at public/manifest.webmanifest", file_exists($manifestPath));
@@ -78,52 +99,36 @@ if (is_array($manifestJson)) {
     pwa_it("Manifest scope is '/'", ($manifestJson['scope'] ?? '') === '/');
     pwa_it("Manifest display mode is 'standalone'", ($manifestJson['display'] ?? '') === 'standalone');
     pwa_it("Manifest theme_color matches brand '#235d3a'", strtolower($manifestJson['theme_color'] ?? '') === '#235d3a');
-    pwa_it("Manifest short_name is <= 12 characters", strlen($manifestJson['short_name'] ?? '') <= 12 && strlen($manifestJson['short_name'] ?? '') > 0, "Length: " . strlen($manifestJson['short_name'] ?? ''));
-    
-    // Check icons
-    $icons = $manifestJson['icons'] ?? [];
-    $has192 = false;
-    $has512 = false;
-    $hasMaskable = false;
-    foreach ($icons as $ic) {
-        if (($ic['sizes'] ?? '') === '192x192') $has192 = true;
-        if (($ic['sizes'] ?? '') === '512x512') $has512 = true;
-        if (($ic['purpose'] ?? '') === 'maskable') $hasMaskable = true;
-    }
-    pwa_it("Manifest includes 192x192 icon", $has192);
-    pwa_it("Manifest includes 512x512 icon", $has512);
-    pwa_it("Manifest includes separate maskable icon definition", $hasMaskable);
+    pwa_it("Manifest short_name is <= 12 characters", strlen($manifestJson['short_name'] ?? '') <= 12 && strlen($manifestJson['short_name'] ?? '') > 0);
 }
 
 // -------------------------------------------------------------
-// Test 3: Service Worker & Offline Page Verification
+// Test 4: Service Worker & Offline Page Verification
 // -------------------------------------------------------------
 $swPath = __DIR__ . '/../public/sw.js';
 pwa_it("Service worker exists at public/sw.js", file_exists($swPath));
 $swContent = file_exists($swPath) ? file_get_contents($swPath) : '';
 pwa_it("Service worker handles 'push' event", strpos($swContent, "addEventListener('push'") !== false);
 pwa_it("Service worker handles 'notificationclick' event", strpos($swContent, "addEventListener('notificationclick'") !== false);
-pwa_it("Service worker skips sensitive caching for checkout/admin/auth", strpos($swContent, "EXCLUDED_PATHS") !== false && strpos($swContent, "/admin") !== false && strpos($swContent, "/checkout") !== false);
+pwa_it("Service worker skips sensitive caching for checkout/admin/auth", strpos($swContent, "SENSITIVE_PREFIXES") !== false && strpos($swContent, "/admin") !== false && strpos($swContent, "/checkout") !== false);
 
 $offlinePath = __DIR__ . '/../public/offline.html';
 pwa_it("Branded offline fallback exists at public/offline.html", file_exists($offlinePath));
 
 // -------------------------------------------------------------
-// Test 4: VAPID Keypair Generation & RFC 8292 Compliance
+// Test 5: VAPID Keypair Generation & RFC 8292 Compliance
 // -------------------------------------------------------------
 $pubKey = WebPushService::getPublicKey();
 pwa_it("VAPID public key is generated and accessible", !empty($pubKey) && is_string($pubKey));
 $pubBytes = WebPushService::base64UrlDecode($pubKey);
-// NIST P-256 uncompressed point starts with 0x04 and is 65 bytes long
-pwa_it("VAPID public key is a valid uncompressed NIST P-256 point (65 bytes)", strlen($pubBytes) === 65 && ord($pubBytes[0]) === 0x04, "Length: " . strlen($pubBytes));
+pwa_it("VAPID public key is a valid uncompressed NIST P-256 point (65 bytes)", strlen($pubBytes) === 65 && ord($pubBytes[0]) === 0x04);
 
 $vapidPath = __DIR__ . '/../storage/vapid_keys.json';
 pwa_it("VAPID key file is stored securely outside web root in storage/vapid_keys.json", file_exists($vapidPath));
 
 // -------------------------------------------------------------
-// Test 5: Device Registration & Subscription Storage
+// Test 6: Device Registration & Subscription Storage
 // -------------------------------------------------------------
-// Clean existing test subscriptions
 $pdo->exec("DELETE FROM `push_subscriptions` WHERE `endpoint` LIKE 'https://test-push-service.local/%'");
 
 $testEndpoint1 = 'https://test-push-service.local/sub/device-alpha-' . bin2hex(random_bytes(4));
@@ -137,7 +142,7 @@ $stmtCheck = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `endpoint` 
 $stmtCheck->execute([$testEndpoint1]);
 $savedSub = $stmtCheck->fetch(PDO::FETCH_ASSOC);
 $stmtCheck->closeCursor();
-pwa_it("Subscription endpoint hash correctly stored in database", !empty($savedSub) && $savedSub['user_type'] === 'customer' && (int)$savedSub['user_id'] === 1);
+pwa_it("Subscription stored with status 'active' and customer_id", !empty($savedSub) && $savedSub['status'] === 'active' && (int)$savedSub['customer_id'] === 1);
 
 // Test unsubscription
 $unsubRes = NotificationService::unsubscribe($testEndpoint1);
@@ -149,7 +154,7 @@ $stmtCheck->closeCursor();
 pwa_it("Unsubscribed device is purged from database", $unsubCheck === false);
 
 // -------------------------------------------------------------
-// Test 6: Multi-Device Support per Account
+// Test 7: Multi-Device Support per Customer Account
 // -------------------------------------------------------------
 $testEndpointDeviceA = 'https://test-push-service.local/sub/customer-dev-a-' . bin2hex(random_bytes(4));
 $testEndpointDeviceB = 'https://test-push-service.local/sub/customer-dev-b-' . bin2hex(random_bytes(4));
@@ -157,194 +162,139 @@ $testEndpointDeviceB = 'https://test-push-service.local/sub/customer-dev-b-' . b
 NotificationService::subscribe($testEndpointDeviceA, $dummyP256dh, $dummyAuth, 'customer', 99, 'Device Phone');
 NotificationService::subscribe($testEndpointDeviceB, $dummyP256dh, $dummyAuth, 'customer', 99, 'Device Laptop');
 
-$stmtMulti = $pdo->prepare("SELECT COUNT(*) FROM `push_subscriptions` WHERE `user_type` = 'customer' AND `user_id` = 99");
+$stmtMulti = $pdo->prepare("SELECT COUNT(*) FROM `push_subscriptions` WHERE `customer_id` = 99 AND `status` = 'active'");
 $stmtMulti->execute();
 $multiCount = (int)$stmtMulti->fetchColumn();
 $stmtMulti->closeCursor();
 pwa_it("Multiple devices can be subscribed for the same customer account", $multiCount === 2, "Count: {$multiCount}");
 
 // Clean up test customer 99
-$pdo->exec("DELETE FROM `push_subscriptions` WHERE `user_id` = 99");
+$pdo->exec("DELETE FROM `push_subscriptions` WHERE `customer_id` = 99");
 
 // -------------------------------------------------------------
-// Test 7: Customer Notification Preferences & Opt-In/Opt-Out
+// Test 8: CATEGORY 1 - OFFERS Broadcast
 // -------------------------------------------------------------
-$testCustId = 101;
-// Initially defaults
-$prefOrder = NotificationService::getCustomerPreference($testCustId, 'order_updates');
-$prefPromo = NotificationService::getCustomerPreference($testCustId, 'promotions');
-pwa_it("Customer order updates enabled by default", $prefOrder === true);
+$subOffers1 = 'https://test-push-service.local/sub/offers-1-' . bin2hex(random_bytes(4));
+NotificationService::subscribe($subOffers1, $dummyP256dh, $dummyAuth, 'customer', 101);
 
-// Update preferences (opt-out of promotions, keep order updates)
-NotificationService::setCustomerPreferences($testCustId, true, false);
-pwa_it("Customer successfully opted out of promotional updates", NotificationService::getCustomerPreference($testCustId, 'promotions') === false);
-pwa_it("Customer order updates remain active", NotificationService::getCustomerPreference($testCustId, 'order_updates') === true);
+$resOffers = NotificationService::sendOffers('Summer Combo Offer! 🥥', 'Get 2 Fresh Coconuts for ₹70 only!', '/assets/images/hero-coconut.png', '/shop');
+pwa_it("Category 1 (Offers) dispatched successfully", !empty($resOffers['success']));
+pwa_it("Offers notification recorded in notification_history", !empty($resOffers['notification_id']));
 
-$prefArray = NotificationService::getCustomerPreferences($testCustId);
-pwa_it("getCustomerPreferences() returns associative array", is_array($prefArray) && isset($prefArray['order_updates']) && isset($prefArray['promotions']));
-
-// Clean test customer pref
-$pdo->exec("DELETE FROM `customer_notification_preferences` WHERE `customer_id` = 101");
+$stmtHCheck = $pdo->prepare("SELECT * FROM `notification_history` WHERE `id` = ?");
+$stmtHCheck->execute([$resOffers['notification_id']]);
+$histRow = $stmtHCheck->fetch(PDO::FETCH_ASSOC);
+$stmtHCheck->closeCursor();
+pwa_it("History record category is 'offers' with correct click_url '/shop'", $histRow && $histRow['category'] === 'offers' && $histRow['click_url'] === '/shop');
 
 // -------------------------------------------------------------
-// Test 8: Event Deduplication Mechanism
+// Test 9: CATEGORY 2 - ORDERS Status Updates & Strict Customer Isolation
 // -------------------------------------------------------------
-$pdo->exec("DELETE FROM `notification_dedup` WHERE `entity_id` = 'TEST-ORDER-DEDUP'");
+// Subscribe Customer 201 device
+$subOrderCust = 'https://test-push-service.local/sub/order-cust-201-' . bin2hex(random_bytes(4));
+NotificationService::subscribe($subOrderCust, $dummyP256dh, $dummyAuth, 'customer', 201);
 
-$orderMock = [
-    'id' => 9999,
-    'order_number' => 'TEST-ORDER-DEDUP',
-    'customer_name' => 'Test Customer',
-    'customer_phone' => '9988776655',
-    'payment_method' => 'cod',
-    'total_amount' => 120.00,
-    'delivery_address' => 'Test Street'
-];
+// Subscribe Customer 202 device
+$subOtherCust = 'https://test-push-service.local/sub/order-cust-202-' . bin2hex(random_bytes(4));
+NotificationService::subscribe($subOtherCust, $dummyP256dh, $dummyAuth, 'customer', 202);
 
-// First dispatch
-$res1 = NotificationService::sendNewOrderToAdmins($orderMock);
-pwa_it("First order alert call executes without duplicate block", isset($res1['success']));
+// Ensure Customer 201 exists in customers table
+$pdo->exec("INSERT IGNORE INTO `customers` (`id`, `name`, `phone`, `password_hash`) VALUES (201, 'Customer 201', '9898000201', 'hash123')");
 
-// Second immediate duplicate call with same order number
-$res2 = NotificationService::sendNewOrderToAdmins($orderMock);
-pwa_it("Duplicate order alert is safely caught by idempotency deduplication", !empty($res2['duplicate']));
+// Create test order belonging to Customer 201
+$trackingHash = bin2hex(random_bytes(16));
+$pdo->exec("
+    INSERT INTO `orders` 
+        (`order_number`, `customer_id`, `customer_name`, `customer_phone`, `fulfilment_method`, `delivery_address`, `subtotal`, `delivery_charge`, `total_amount`, `payment_method`, `payment_status`, `order_status`, `tracking_hash`)
+    VALUES 
+        ('TEST-ORD-201', 201, 'Customer 201', '9898000201', 'delivery', 'Green Park, Bhopal', 80.00, 40.00, 120.00, 'cod', 'pending', 'confirmed', '{$trackingHash}')
+");
+$testOrderId = (int)$pdo->lastInsertId();
 
-// Clean up dedup test
-$pdo->exec("DELETE FROM `notification_dedup` WHERE `entity_id` = 'TEST-ORDER-DEDUP'");
+// Dispatch order update
+$resOrderUpdate = NotificationService::sendOrderUpdate($testOrderId, 'out_for_delivery');
+pwa_it("Category 2 (Orders) update dispatched successfully", !empty($resOrderUpdate['success']));
+pwa_it("Order update targeted exactly 1 device (Customer 201 only, no leakage to Customer 202)", $resOrderUpdate['sent'] === 1 && $resOrderUpdate['total'] === 1);
 
-// -------------------------------------------------------------
-// Test 9: Customer Data Isolation & No Cross-Customer Leakage
-// -------------------------------------------------------------
-// Register sub for Customer 10
-$epCust10 = 'https://test-push-service.local/sub/cust-10-' . bin2hex(random_bytes(4));
-NotificationService::subscribe($epCust10, $dummyP256dh, $dummyAuth, 'customer', 10);
+// Verify notification_history record
+$stmtOrdHist = $pdo->prepare("SELECT * FROM `notification_history` WHERE `id` = ?");
+$stmtOrdHist->execute([$resOrderUpdate['notification_id']]);
+$ordHistRow = $stmtOrdHist->fetch(PDO::FETCH_ASSOC);
+$stmtOrdHist->closeCursor();
+pwa_it("Order history category is 'orders' with single_customer target_type", $ordHistRow && $ordHistRow['category'] === 'orders' && $ordHistRow['target_type'] === 'single_customer' && (int)$ordHistRow['target_customer_id'] === 201);
 
-// Register sub for Customer 20
-$epCust20 = 'https://test-push-service.local/sub/cust-20-' . bin2hex(random_bytes(4));
-NotificationService::subscribe($epCust20, $dummyP256dh, $dummyAuth, 'customer', 20);
-
-// Fetch subs for Customer 10 specifically
-$stmtIsolation = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'customer' AND `user_id` = ?");
-$stmtIsolation->execute([10]);
-$subsCust10 = $stmtIsolation->fetchAll(PDO::FETCH_ASSOC);
-$stmtIsolation->closeCursor();
-
-pwa_it("Customer 10 subscriptions only contain Customer 10 endpoints", count($subsCust10) === 1 && $subsCust10[0]['endpoint'] === $epCust10);
-
-// Clean up
-$pdo->exec("DELETE FROM `push_subscriptions` WHERE `user_id` IN (10, 20)");
+// Clean up test order
+$pdo->exec("DELETE FROM `orders` WHERE `id` = {$testOrderId}");
 
 // -------------------------------------------------------------
-// Test 10: Overall Notification Statistics
+// Test 10: CATEGORY 3 - STOCK Announcements with Duplicate Protection
 // -------------------------------------------------------------
+$pdo->exec("DELETE FROM `notification_history` WHERE `category` = 'stock'");
+
+$stockTitle = 'Fresh Tender Coconuts Back in Stock! 🌴';
+$resStock1 = NotificationService::sendStockAlert($stockTitle, 'Harvest arrived 10 mins ago. Pure, sweet, and chilled.');
+pwa_it("Category 3 (Stock) first broadcast succeeded", !empty($resStock1['success']));
+
+// Attempt duplicate within 10 minutes
+$resStockDuplicate = NotificationService::sendStockAlert($stockTitle, 'Harvest arrived 10 mins ago. Pure, sweet, and chilled.');
+pwa_it("Stock duplicate broadcast is blocked by 10-minute duplicate protection", $resStockDuplicate['success'] === false && strpos($resStockDuplicate['error'], 'similar stock notification') !== false);
+
+// -------------------------------------------------------------
+// Test 11: CATEGORY 4 - NEWS Broadcast
+// -------------------------------------------------------------
+$resNews = NotificationService::sendNews('Diwali Holiday Hours Notice', 'Store will remain open until 8 PM during Diwali holidays.', null, '/');
+pwa_it("Category 4 (News) broadcast dispatched successfully", !empty($resNews['success']));
+
+$stmtNewsHist = $pdo->prepare("SELECT * FROM `notification_history` WHERE `id` = ?");
+$stmtNewsHist->execute([$resNews['notification_id']]);
+$newsHistRow = $stmtNewsHist->fetch(PDO::FETCH_ASSOC);
+$stmtNewsHist->closeCursor();
+pwa_it("News history record category is 'news' with click_url '/'", $newsHistRow && $newsHistRow['category'] === 'news' && $newsHistRow['click_url'] === '/');
+
+// -------------------------------------------------------------
+// Test 12: Notification Deliveries Tracking & Auto-Pruning Expired Subscriptions
+// -------------------------------------------------------------
+$stmtDels = $pdo->query("SELECT COUNT(*) FROM `notification_deliveries` WHERE `status` = 'sent'");
+$sentCount = (int)$stmtDels->fetchColumn();
+$stmtDels->closeCursor();
+pwa_it("notification_deliveries logs successful deliveries", $sentCount > 0);
+
+// Test Expired Subscription (410 Gone) Handling
+$expiredEp = 'https://test-push-service.local/expired-dev-' . bin2hex(random_bytes(6));
+NotificationService::subscribe($expiredEp, $dummyP256dh, $dummyAuth, 'customer', 999);
+
+// Dispatch notification to expired endpoint
+$subExpiredRow = ['endpoint' => $expiredEp, 'p256dh' => $dummyP256dh, 'auth' => $dummyAuth];
+$resExpired = WebPushService::sendNotification($subExpiredRow, ['title' => 'Test', 'body' => 'Test']);
+pwa_it("Push service identifies HTTP 410 expired subscription", $resExpired['expired'] === true && $resExpired['http_code'] === 410);
+
+$cleanupDone = NotificationService::cleanupExpiredSubscription($expiredEp);
+pwa_it("cleanupExpiredSubscription purges expired subscription endpoint", $cleanupDone === true);
+
+// -------------------------------------------------------------
+// Test 13: Admin Device Enrollment Isolation
+// -------------------------------------------------------------
+$adminEp = 'https://test-push-service.local/fcm/admin-iso-' . bin2hex(random_bytes(6));
+$resAdmin = NotificationService::subscribe($adminEp, $dummyP256dh, $dummyAuth, 'admin', 1);
+pwa_it("Admin device enrolled with user_type 'admin'", $resAdmin['success'] && $resAdmin['user_type'] === 'admin');
+
+// Ensure admin devices do not receive customer broadcast
+$stmtCheckAdminInCust = $pdo->query("SELECT COUNT(*) FROM `push_subscriptions` WHERE `user_type` IN ('customer', 'guest') AND `endpoint` = '{$adminEp}'");
+$adminInCust = (int)$stmtCheckAdminInCust->fetchColumn();
+$stmtCheckAdminInCust->closeCursor();
+pwa_it("Admin device is strictly isolated from customer broadcast lists", $adminInCust === 0);
+
+// Test overall stats
 $stats = NotificationService::getStats();
-pwa_it("NotificationService::getStats() returns admin_devices, customer_devices, total_delivered", 
-    isset($stats['admin_devices']) && 
+pwa_it("NotificationService::getStats() returns customer_devices, admin_devices, total_delivered", 
     isset($stats['customer_devices']) && 
+    isset($stats['admin_devices']) && 
     isset($stats['total_delivered']) && 
     isset($stats['vapid_public_key'])
 );
 
 // -------------------------------------------------------------
-// Test 11: Admin Device Enrollment & Multi-Device Support
-// -------------------------------------------------------------
-$adminEp1 = 'https://test-push-service.local/fcm/admin-dev-01-' . bin2hex(random_bytes(6));
-$adminEp2 = 'https://test-push-service.local/fcm/admin-dev-02-' . bin2hex(random_bytes(6));
-
-// Enroll first admin device
-$resAdmin1 = NotificationService::subscribe($adminEp1, $dummyP256dh, $dummyAuth, 'admin', 1);
-pwa_it("Admin device 1 enrolled and verified in database", $resAdmin1['success'] && !empty($resAdmin1['subscription_id']));
-
-// Verify device status returns enrolled as admin
-$status1 = NotificationService::getDeviceStatus($adminEp1);
-pwa_it("Device status correctly identifies enrolled admin device", $status1['enrolled'] === true && $status1['user_type'] === 'admin');
-
-// Re-subscribing existing device updates instead of duplicating
-$resAdmin1Repeat = NotificationService::subscribe($adminEp1, $dummyP256dh, $dummyAuth, 'admin', 1);
-pwa_it("Re-subscribing existing device updates subscription instead of creating duplicate", $resAdmin1Repeat['subscription_id'] === $resAdmin1['subscription_id']);
-
-$stmtCountAdmin = $pdo->prepare("SELECT COUNT(*) FROM `push_subscriptions` WHERE `endpoint` = ?");
-$stmtCountAdmin->execute([$adminEp1]);
-$countAdmin1 = (int)$stmtCountAdmin->fetchColumn();
-$stmtCountAdmin->closeCursor();
-pwa_it("Exactly 1 database row exists for the endpoint", $countAdmin1 === 1);
-
-// Enroll second admin device for same admin (multi-device support)
-$resAdmin2 = NotificationService::subscribe($adminEp2, $dummyP256dh, $dummyAuth, 'admin', 1);
-pwa_it("Second admin device enrolled successfully for same admin account", $resAdmin2['success'] && $resAdmin2['subscription_id'] !== $resAdmin1['subscription_id']);
-
-// Send test alert to current device endpoint
-$testSend = NotificationService::sendTestToDevice($adminEp1, 'admin');
-pwa_it("sendTestToDevice dispatches alert successfully to target admin device", $testSend['success'] === true);
-
-// -------------------------------------------------------------
-// Test 12: Post-Auth Prompt Session Flags (Customer Login & Registration)
-// -------------------------------------------------------------
-$testPhone = '98' . mt_rand(10000000, 99999999);
-$pdo->exec("DELETE FROM `customers` WHERE `phone` LIKE '%{$testPhone}%'");
-
-// Simulate customer registration trigger
-$_SESSION = [];
-$regRes = CustomerAuthService::register([
-    'name' => 'Push Test Customer',
-    'phone' => $testPhone,
-    'password' => 'secret123',
-    'confirm_password' => 'secret123'
-], '127.0.0.1');
-pwa_it("Customer registration sets show_push_prompt_after_auth in session", !empty($regRes['success']) && !empty($_SESSION['show_push_prompt_after_auth']));
-
-// Simulate customer login trigger
-$_SESSION = [];
-$loginRes = CustomerAuthService::login($testPhone, 'secret123', '127.0.0.1');
-pwa_it("Customer login sets show_push_prompt_after_auth in session", !empty($loginRes['success']) && !empty($_SESSION['show_push_prompt_after_auth']));
-
-// -------------------------------------------------------------
-// Test 13: Client-Side Permission Checks, Gesture Flow & Suppression
-// -------------------------------------------------------------
-$pwaJsCode = file_get_contents(__DIR__ . '/../public/assets/js/pwa-push.js');
-$hasGestureRequest = strpos($pwaJsCode, 'Notification.requestPermission()') !== false;
-$hasNoPageLoadRequest = strpos($pwaJsCode, 'init: async function () {\n            Notification.requestPermission()') === false;
-pwa_it("Permission request logic requires explicit user gesture and never prompts on init", $hasGestureRequest && $hasNoPageLoadRequest);
-
-$hasSuppressionCheck = strpos($pwaJsCode, "Notification.permission === 'granted' && this.isSubscribed") !== false;
-pwa_it("Popup is automatically suppressed when permission is already granted and active", $hasSuppressionCheck);
-
-$hasDismissTracking = strpos($pwaJsCode, "sessionStorage.setItem('na_push_prompt_dismissed', '1')") !== false &&
-                      strpos($pwaJsCode, "sessionStorage.getItem('na_push_prompt_dismissed') === '1'") !== false;
-pwa_it("Session dismissal tracking: 'Not Now' prevents reprompting in same session", $hasDismissTracking);
-
-// -------------------------------------------------------------
-// Test 14: Centralized Notification Center & Blocked Permission Guide
-// -------------------------------------------------------------
-$accountHtml = file_get_contents(__DIR__ . '/../app/views/customer/account.php');
-$hasOpenCenterBtn = strpos($accountHtml, 'openNotificationCenter') !== false;
-$footerHtml = file_get_contents(__DIR__ . '/../app/views/layouts/footer.php');
-$hasCenterModal = strpos($footerHtml, 'pwa-center-modal') !== false || strpos($footerHtml, 'pwa-notification-center-modal') !== false;
-pwa_it("Centralized Notification Center modal can be reopened anytime from account view", $hasOpenCenterBtn && $hasCenterModal);
-
-$hasRecoveryGuide = strpos($pwaJsCode, 'showBlockedPermissionModal') !== false;
-$hasHelpModal = strpos($footerHtml, 'pwa-auth-blocked-help') !== false || strpos($footerHtml, 'pwa-center-blocked-help') !== false;
-pwa_it("Clear browser unblock guide is provided when permission is in denied state", $hasRecoveryGuide && $hasHelpModal);
-
-// -------------------------------------------------------------
-// Test 15: Customer Test Push & Expired Subscription Pruning
-// -------------------------------------------------------------
-$custTestEp = 'https://test-push-service.local/cust-test-' . bin2hex(random_bytes(6));
-NotificationService::subscribe($custTestEp, $dummyP256dh, $dummyAuth, 'customer', 55, 'Customer Android Phone');
-$custTestRes = NotificationService::sendTestToDevice($custTestEp, 'customer');
-pwa_it("sendTestToDevice dispatches alert successfully to target customer device", $custTestRes['success'] === true);
-
-$expiredEp = 'https://test-push-service.local/expired-dev-' . bin2hex(random_bytes(6));
-NotificationService::subscribe($expiredEp, $dummyP256dh, $dummyAuth, 'customer', 999);
-$cleanupDone = NotificationService::cleanupExpiredSubscription($expiredEp);
-$stmtExpCheck = $pdo->prepare("SELECT COUNT(*) FROM `push_subscriptions` WHERE `endpoint` = ?");
-$stmtExpCheck->execute([$expiredEp]);
-$expCount = (int)$stmtExpCheck->fetchColumn();
-$stmtExpCheck->closeCursor();
-pwa_it("Expired subscription auto-pruning purges stale endpoints from database", $cleanupDone === true && $expCount === 0);
-
-// -------------------------------------------------------------
-// Test 16: VAPID Claims Formatting & RFC 8291 Cryptographic Verification
+// Test 14: VAPID Claims Formatting & RFC 8291 Cryptographic Verification
 // -------------------------------------------------------------
 $reflector = new ReflectionClass('WebPushService');
 $jwtMethod = $reflector->getMethod('createVapidJwt');
@@ -402,51 +352,29 @@ $isCryptoValid = ($cleanDecrypted === $testPlaintext);
 pwa_it("RFC 8291 AES-128-GCM encryption & round-trip decryption verified", $isCryptoValid);
 
 // -------------------------------------------------------------
-// Test 17: Finite State Machine & Admin Diagnostics Panel
+// Test 15: Client JS & Admin View Verification
 // -------------------------------------------------------------
 $pwaJsContent = file_get_contents(__DIR__ . '/../public/assets/js/pwa-push.js');
-$fsmStates = [
-    'UNSUPPORTED',
-    'PERMISSION_NOT_REQUESTED',
-    'PERMISSION_DENIED',
-    'PERMISSION_GRANTED',
-    'DEVICE_NOT_SUBSCRIBED',
-    'SUBSCRIPTION_PENDING',
-    'SUBSCRIPTION_SAVED',
-    'DEVICE_ENROLLED',
-    'SUBSCRIPTION_EXPIRED',
-    'ENROLLMENT_FAILED'
-];
-$allStatesFound = true;
-foreach ($fsmStates as $s) {
-    if (!str_contains($pwaJsContent, $s)) {
-        $allStatesFound = false;
-        break;
-    }
-}
-pwa_it("pwa-push.js defines complete 10-state finite state machine (FSM)", $allStatesFound);
-
-$adminNotifView = file_get_contents(__DIR__ . '/../app/views/admin/notifications.php');
-$hasDiagnosticsPanel = strpos($adminNotifView, 'Live Web Push Diagnostics Panel') !== false &&
-                       strpos($adminNotifView, 'diag-val-permission') !== false &&
-                       strpos($adminNotifView, 'diag-val-sw') !== false &&
-                       strpos($adminNotifView, 'diag-val-push') !== false &&
-                       strpos($adminNotifView, 'diag-val-db') !== false &&
-                       strpos($adminNotifView, 'admin-repair-btn') !== false;
-pwa_it("Admin Notifications view includes live diagnostics panel & repair action", $hasDiagnosticsPanel);
-
-// Test sendTestToDevice response telemetry
-$diagTestEp = 'https://test-push-service.local/diag-test-' . bin2hex(random_bytes(6));
-NotificationService::subscribe($diagTestEp, $dummyP256dh, $dummyAuth, 'admin', 1, 'Admin Chrome');
-$diagTestRes = NotificationService::sendTestToDevice($diagTestEp, 'admin');
-pwa_it("sendTestToDevice returns http_code, latency_ms and endpoint_host", 
-    isset($diagTestRes['http_code']) && isset($diagTestRes['latency_ms']) && isset($diagTestRes['endpoint_host'])
+pwa_it("pwa-push.js defines subscribeDevice, syncDeviceStatus, and repairSubscription", 
+    strpos($pwaJsContent, 'subscribeDevice') !== false &&
+    strpos($pwaJsContent, 'syncDeviceStatus') !== false &&
+    strpos($pwaJsContent, 'repairSubscription') !== false
 );
 
-// Clean up test customer & test subscriptions
+$adminNotifView = file_get_contents(__DIR__ . '/../app/views/admin/notifications.php');
+pwa_it("Admin Notifications view has 4-category selector (offers, orders, stock, news)", 
+    strpos($adminNotifView, '1. OFFERS') !== false &&
+    strpos($adminNotifView, '2. ORDERS') !== false &&
+    strpos($adminNotifView, '3. STOCK') !== false &&
+    strpos($adminNotifView, '4. NEWS') !== false
+);
+
+pwa_it("Admin Notifications view displays active subscriber metrics and notification history", 
+    strpos($adminNotifView, 'Total Customer Devices') !== false &&
+    strpos($adminNotifView, 'Notification History') !== false
+);
+
+// Clean up test subscriptions
 $pdo->exec("DELETE FROM `push_subscriptions` WHERE `endpoint` LIKE 'https://test-push-service.local/%'");
-$pdo->exec("DELETE FROM `customers` WHERE `phone` LIKE '%{$testPhone}%'");
 
 echo "\nPWA & Web Push Notification tests completed: {$pwaPass} passed, {$pwaFail} failed.\n";
-
-

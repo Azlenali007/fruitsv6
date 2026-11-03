@@ -485,7 +485,7 @@ class InstallerController {
                     // Verify required tables exist
                     $stmtVerify = $pdo->query("SHOW TABLES");
                     $postTables = $stmtVerify->fetchAll(PDO::FETCH_COLUMN);
-                    $required = ['products', 'orders', 'admins', 'settings', 'customers', 'customer_login_attempts', 'categories', 'combos', 'combo_items', 'delivery_areas', 'invoices', 'push_subscriptions', 'notifications', 'notification_deliveries', 'customer_notification_preferences', 'notification_dedup'];
+                    $required = ['products', 'orders', 'admins', 'settings', 'customers', 'customer_login_attempts', 'categories', 'combos', 'combo_items', 'delivery_areas', 'invoices', 'push_subscriptions', 'notification_history', 'notification_deliveries'];
                     $missingTables = array_diff($required, $postTables);
                     if (!empty($missingTables)) {
                         throw new Exception("Required tables could not be verified: " . implode(', ', $missingTables));
@@ -653,8 +653,7 @@ class InstallerController {
                 'admins', 'products', 'orders', 'order_items', 'settings',
                 'customers', 'customer_login_attempts', 'categories',
                 'combos', 'combo_items', 'delivery_areas', 'invoices',
-                'push_subscriptions', 'notifications', 'notification_deliveries',
-                'customer_notification_preferences', 'notification_dedup'
+                'push_subscriptions', 'notification_history', 'notification_deliveries'
             ];
             $stmt = $pdo->query("SHOW TABLES");
             $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);

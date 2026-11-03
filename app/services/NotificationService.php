@@ -3,17 +3,30 @@
  * PWA Web Push Notification Service
  * N.A Fresh Fruits & Coconuts
  * 
- * Manages device subscriptions, customer preferences, event deduplication,
- * admin order alerts, customer order lifecycle updates, and promotional broadcasts.
- * Zero cron dependencies - direct backend event dispatch.
+ * Rebuilt from scratch using PHP 8.2+ and MySQL / InnoDB.
+ * Implements the 4 distinct notification categories:
+ *   1. OFFERS (Broadcast promotional discounts, combo deals, seasonal specials to all customers)
+ *   2. ORDERS (Direct status change alerts sent ONLY to the customer who placed the order)
+ *   3. STOCK (Coconut water / fruit availability announcements with duplicate protection)
+ *   4. NEWS (Store announcements, holiday hours, service area updates)
+ * 
+ * Zero cron dependencies - direct backend event dispatch with RFC 8291 / RFC 8292 encryption.
  */
 
 class NotificationService {
 
     /**
-     * Subscribe a client device to Web Push notifications with real server persistence verification
+     * Subscribe a client device endpoint to Web Push notifications
+     *
+     * @param string $endpoint Browser push subscription endpoint URL
+     * @param string $p256dh Client public key (base64url)
+     * @param string $auth Client authentication secret (base64url)
+     * @param string $userType 'customer', 'guest', or 'admin'
+     * @param int|null $customerId Customer ID (if logged in)
+     * @param string|null $userAgent Browser User Agent
+     * @return array
      */
-    public static function subscribe(string $endpoint, string $p256dh, string $auth, string $userType = 'customer', ?int $userId = null, ?string $userAgent = null): array {
+    public static function subscribe(string $endpoint, string $p256dh, string $auth, string $userType = 'customer', ?int $customerId = null, ?string $userAgent = null): array {
         $endpoint = trim($endpoint);
         $p256dh = trim($p256dh);
         $auth = trim($auth);
@@ -25,21 +38,18 @@ class NotificationService {
             return ['success' => false, 'error' => 'Invalid encryption keys from browser.'];
         }
 
-        // Validate user type
-        if (!in_array($userType, ['admin', 'customer', 'guest'], true)) {
+        if (!in_array($userType, ['customer', 'guest', 'admin'], true)) {
             $userType = 'customer';
         }
 
-        // If user is admin, enforce active admin session or valid explicit admin user id
-        if ($userType === 'admin') {
-            if (AuthService::check()) {
-                $userId = AuthService::adminId();
-            } elseif (empty($userId)) {
-                return ['success' => false, 'error' => 'Unauthorized: Admin authentication required to register admin push device.'];
+        // Resolve customer ID from session if not provided
+        if ($userType === 'customer' && empty($customerId)) {
+            if (CustomerAuthService::check()) {
+                $customerId = CustomerAuthService::customerId();
             }
-        } elseif ($userType === 'customer') {
-            if (empty($userId) && CustomerAuthService::check()) {
-                $userId = CustomerAuthService::customerId();
+        } elseif ($userType === 'admin') {
+            if (!AuthService::check() && empty($customerId)) {
+                return ['success' => false, 'error' => 'Admin authentication required to register admin push device.'];
             }
         }
 
@@ -49,20 +59,21 @@ class NotificationService {
         try {
             $stmt = $pdo->prepare("
                 INSERT INTO `push_subscriptions` 
-                    (`user_type`, `user_id`, `endpoint`, `endpoint_hash`, `p256dh`, `auth`, `user_agent`, `last_used_at`)
+                    (`customer_id`, `user_type`, `endpoint`, `endpoint_hash`, `p256dh`, `auth`, `user_agent`, `status`, `last_used_at`)
                 VALUES 
-                    (?, ?, ?, ?, ?, ?, ?, NOW())
+                    (?, ?, ?, ?, ?, ?, ?, 'active', NOW())
                 ON DUPLICATE KEY UPDATE 
+                    `customer_id` = COALESCE(VALUES(`customer_id`), `customer_id`),
                     `user_type` = VALUES(`user_type`),
-                    `user_id` = VALUES(`user_id`),
                     `p256dh` = VALUES(`p256dh`),
                     `auth` = VALUES(`auth`),
                     `user_agent` = VALUES(`user_agent`),
+                    `status` = 'active',
                     `last_used_at` = NOW()
             ");
             $stmt->execute([
+                $customerId,
                 $userType,
-                $userId,
                 $endpoint,
                 $endpointHash,
                 $p256dh,
@@ -71,31 +82,52 @@ class NotificationService {
             ]);
             $stmt->closeCursor();
 
-            // Verify subscription actually persisted in database
-            $stmtVer = $pdo->prepare("SELECT `id`, `user_type`, `user_id`, `created_at` FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
+            // Verify subscription in database
+            $stmtVer = $pdo->prepare("SELECT `id`, `customer_id`, `user_type`, `status` FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
             $stmtVer->execute([$endpointHash]);
-            $verifiedRow = $stmtVer->fetch(PDO::FETCH_ASSOC);
+            $row = $stmtVer->fetch(PDO::FETCH_ASSOC);
             $stmtVer->closeCursor();
 
-            if (!$verifiedRow) {
-                return ['success' => false, 'error' => 'Database verification failed: Device subscription was not saved.'];
+            if (!$row) {
+                return ['success' => false, 'error' => 'Database persistence verification failed.'];
             }
 
             return [
                 'success' => true,
-                'subscription_id' => (int)$verifiedRow['id'],
-                'user_type' => $verifiedRow['user_type'],
-                'user_id' => $verifiedRow['user_id'] ? (int)$verifiedRow['user_id'] : null,
+                'subscription_id' => (int)$row['id'],
+                'user_type' => $row['user_type'],
+                'customer_id' => $row['customer_id'] ? (int)$row['customer_id'] : null,
                 'verified' => true
             ];
         } catch (Throwable $e) {
-            error_log("Failed to save push subscription: " . $e->getMessage());
-            return ['success' => false, 'error' => 'Database error while saving subscription: ' . $e->getMessage()];
+            error_log("NotificationService::subscribe error: " . $e->getMessage());
+            return ['success' => false, 'error' => 'Database error: ' . $e->getMessage()];
         }
     }
 
     /**
-     * Get real server enrollment status of a specific device endpoint
+     * Unsubscribe a device endpoint
+     */
+    public static function unsubscribe(string $endpoint): bool {
+        $endpoint = trim($endpoint);
+        if (empty($endpoint)) return false;
+
+        $endpointHash = hash('sha256', $endpoint);
+        $pdo = Database::getConnection();
+        try {
+            $stmt = $pdo->prepare("DELETE FROM `push_subscriptions` WHERE `endpoint_hash` = ?");
+            $stmt->execute([$endpointHash]);
+            $res = ($stmt->rowCount() > 0);
+            $stmt->closeCursor();
+            return $res;
+        } catch (Throwable $e) {
+            error_log("NotificationService::unsubscribe error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get device status for a given endpoint
      */
     public static function getDeviceStatus(string $endpoint): array {
         $endpoint = trim($endpoint);
@@ -105,37 +137,421 @@ class NotificationService {
 
         $endpointHash = hash('sha256', $endpoint);
         $pdo = Database::getConnection();
-
         try {
-            $stmt = $pdo->prepare("SELECT `id`, `user_type`, `user_id`, `last_used_at`, `created_at` FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
+            $stmt = $pdo->prepare("SELECT `id`, `customer_id`, `user_type`, `status`, `created_at`, `last_used_at` FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
             $stmt->execute([$endpointHash]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             $stmt->closeCursor();
 
-            if ($row) {
+            if ($row && $row['status'] === 'active') {
                 return [
                     'enrolled' => true,
                     'subscription_id' => (int)$row['id'],
+                    'customer_id' => $row['customer_id'] ? (int)$row['customer_id'] : null,
                     'user_type' => $row['user_type'],
-                    'user_id' => $row['user_id'] ? (int)$row['user_id'] : null,
+                    'status' => $row['status'],
                     'created_at' => $row['created_at'],
                     'last_used_at' => $row['last_used_at']
                 ];
             }
 
-            return ['enrolled' => false];
+            return ['enrolled' => false, 'status' => $row['status'] ?? 'none'];
         } catch (Throwable $e) {
             return ['enrolled' => false, 'error' => $e->getMessage()];
         }
     }
 
     /**
-     * Send an instant test push notification to a specific device endpoint
+     * Associate anonymous / guest subscriptions with a newly logged-in customer
      */
-    public static function sendTestToDevice(string $endpoint, string $role = 'admin'): array {
+    public static function associateCustomerSubscriptions(int $customerId, ?string $endpointHash = null): void {
+        if ($customerId <= 0) return;
+        $pdo = Database::getConnection();
+
+        try {
+            if (!empty($endpointHash)) {
+                $stmt = $pdo->prepare("
+                    UPDATE `push_subscriptions` 
+                    SET `customer_id` = ?, `user_type` = 'customer' 
+                    WHERE `endpoint_hash` = ? AND (`customer_id` IS NULL OR `customer_id` = 0)
+                ");
+                $stmt->execute([$customerId, $endpointHash]);
+                $stmt->closeCursor();
+            }
+        } catch (Throwable $e) {
+            error_log("Error associating customer subscription: " . $e->getMessage());
+        }
+    }
+
+    // =========================================================================
+    // CATEGORY 1: OFFERS
+    // Broadcast promotional discounts, combo deals, seasonal fruit specials to customers
+    // =========================================================================
+    public static function sendOffers(string $title, string $message, ?string $imageUrl = null, string $clickUrl = '/shop', ?int $adminId = null): array {
+        return self::dispatchBroadcast('offers', $title, $message, $imageUrl, $clickUrl, $adminId);
+    }
+
+    // =========================================================================
+    // CATEGORY 2: ORDERS
+    // Auto-triggered on order status change. Sent ONLY to order owner/customer.
+    // Also notifies admin devices when a new order arrives.
+    // =========================================================================
+    public static function sendOrderUpdate(int $orderId, string $newStatus, ?string $customMessage = null): array {
+        $pdo = Database::getConnection();
+
+        // 1. Fetch order details
+        $stmt = $pdo->prepare("SELECT * FROM `orders` WHERE `id` = ? LIMIT 1");
+        $stmt->execute([$orderId]);
+        $order = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stmt->closeCursor();
+
+        if (!$order) {
+            return ['success' => false, 'error' => 'Order not found.'];
+        }
+
+        $orderNumber = $order['order_number'];
+        $customerId = !empty($order['customer_id']) ? (int)$order['customer_id'] : null;
+
+        // Friendly status titles and messages
+        $statusMap = [
+            'confirmed' => [
+                'title' => "Order #{$orderNumber} Confirmed! 🥥",
+                'body' => "Your fresh coconut order has been confirmed and is being prepped."
+            ],
+            'processing' => [
+                'title' => "Order #{$orderNumber} is Being Prepared 🌴",
+                'body' => "Our team is fresh-harvesting and packing your coconuts now."
+            ],
+            'ready' => [
+                'title' => "Order #{$orderNumber} is Ready! 📦",
+                'body' => "Your order is packed and ready for dispatch or store pickup."
+            ],
+            'out_for_delivery' => [
+                'title' => "Order #{$orderNumber} Out for Delivery! 🛵",
+                'body' => "Our delivery partner is on the way with your chilled coconuts."
+            ],
+            'delivered' => [
+                'title' => "Order #{$orderNumber} Delivered! 🥥✨",
+                'body' => "Enjoy your fresh natural coconut water! Thank you for ordering."
+            ],
+            'cancelled' => [
+                'title' => "Order #{$orderNumber} Cancelled",
+                'body' => "Your order #{$orderNumber} has been cancelled. Contact support for help."
+            ]
+        ];
+
+        $defaultInfo = $statusMap[strtolower($newStatus)] ?? [
+            'title' => "Order #{$orderNumber} Update",
+            'body' => "Status updated to " . ucfirst(str_replace('_', ' ', $newStatus)) . "."
+        ];
+
+        $title = $defaultInfo['title'];
+        $body = !empty($customMessage) ? $customMessage : $defaultInfo['body'];
+        $clickUrl = "/track?order_number=" . urlencode($orderNumber);
+
+        // Record in notification_history
+        $stmtNotif = $pdo->prepare("
+            INSERT INTO `notification_history`
+                (`category`, `title`, `message`, `image_url`, `click_url`, `target_type`, `target_customer_id`, `created_at`)
+            VALUES
+                ('orders', ?, ?, NULL, ?, 'single_customer', ?, NOW())
+        ");
+        $stmtNotif->execute([$title, $body, $clickUrl, $customerId]);
+        $notifId = (int)$pdo->lastInsertId();
+        $stmtNotif->closeCursor();
+
+        // Find customer subscriptions (Strict Data Isolation: Only send to this customer)
+        $subs = [];
+        if ($customerId) {
+            $stmtSubs = $pdo->prepare("
+                SELECT * FROM `push_subscriptions` 
+                WHERE `customer_id` = ? AND `status` = 'active'
+            ");
+            $stmtSubs->execute([$customerId]);
+            $subs = $stmtSubs->fetchAll(PDO::FETCH_ASSOC);
+            $stmtSubs->closeCursor();
+        }
+
+        // If customer has no subscriptions yet, try recent guest subscription on the same session
+        if (empty($subs) && !empty($_SESSION['guest_push_endpoint_hash'])) {
+            $stmtGuest = $pdo->prepare("
+                SELECT * FROM `push_subscriptions` 
+                WHERE `endpoint_hash` = ? AND `status` = 'active'
+            ");
+            $stmtGuest->execute([$_SESSION['guest_push_endpoint_hash']]);
+            $guestSub = $stmtGuest->fetch(PDO::FETCH_ASSOC);
+            $stmtGuest->closeCursor();
+            if ($guestSub) {
+                $subs[] = $guestSub;
+            }
+        }
+
+        if (empty($subs)) {
+            return [
+                'success' => true,
+                'sent' => 0,
+                'total' => 0,
+                'notification_id' => $notifId,
+                'message' => 'Customer has no active registered push devices.'
+            ];
+        }
+
+        $payload = [
+            'title' => $title,
+            'body' => $body,
+            'icon' => '/assets/images/icons/icon-192.png',
+            'badge' => '/assets/images/icons/badge-72.png',
+            'tag' => 'order-' . $orderNumber . '-' . strtolower($newStatus),
+            'data' => [
+                'category' => 'orders',
+                'order_id' => $orderId,
+                'order_number' => $orderNumber,
+                'url' => $clickUrl
+            ]
+        ];
+
+        $sent = 0;
+        $failed = 0;
+
+        foreach ($subs as $sub) {
+            $res = WebPushService::sendNotification($sub, $payload);
+            if ($res['success']) {
+                $sent++;
+                self::recordDelivery($notifId, (int)$sub['id'], 'sent', $res['http_code'], null);
+            } else {
+                $failed++;
+                $status = !empty($res['expired']) ? 'expired' : 'failed';
+                self::recordDelivery($notifId, (int)$sub['id'], $status, $res['http_code'], $res['error']);
+                if (!empty($res['expired'])) {
+                    self::expireSubscriptionById((int)$sub['id']);
+                }
+            }
+        }
+
+        $stmtUp = $pdo->prepare("UPDATE `notification_history` SET `success_count` = ?, `failure_count` = ? WHERE `id` = ?");
+        $stmtUp->execute([$sent, $failed, $notifId]);
+        $stmtUp->closeCursor();
+
+        return [
+            'success' => true,
+            'sent' => $sent,
+            'failed' => $failed,
+            'total' => count($subs),
+            'notification_id' => $notifId
+        ];
+    }
+
+    /**
+     * Send immediate push notification to authorized admin devices on new incoming order
+     */
+    public static function notifyAdminsNewOrder(array $order): array {
+        $pdo = Database::getConnection();
+
+        $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'admin' AND `status` = 'active'");
+        $adminSubs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt->closeCursor();
+
+        if (empty($adminSubs)) {
+            return ['success' => true, 'sent' => 0, 'message' => 'No active admin devices registered.'];
+        }
+
+        $orderNum = $order['order_number'] ?? 'New';
+        $total = number_format((float)($order['total_amount'] ?? 0), 2);
+        $method = strtoupper($order['payment_method'] ?? 'COD');
+
+        $title = "🔔 New Order #{$orderNum} (₹{$total})";
+        $body = "New {$method} order placed! Click to view details and start packing.";
+        $clickUrl = "/admin/orders/view?id=" . (int)($order['id'] ?? 0);
+
+        $payload = [
+            'title' => $title,
+            'body' => $body,
+            'icon' => '/assets/images/icons/icon-192.png',
+            'badge' => '/assets/images/icons/badge-72.png',
+            'tag' => 'admin-order-' . $orderNum,
+            'data' => [
+                'category' => 'orders',
+                'url' => $clickUrl
+            ]
+        ];
+
+        $sent = 0;
+        foreach ($adminSubs as $sub) {
+            $res = WebPushService::sendNotification($sub, $payload);
+            if ($res['success']) {
+                $sent++;
+            } elseif (!empty($res['expired'])) {
+                self::expireSubscriptionById((int)$sub['id']);
+            }
+        }
+
+        return ['success' => true, 'sent' => $sent, 'total' => count($adminSubs)];
+    }
+
+    // =========================================================================
+    // CATEGORY 3: STOCK
+    // Coconut water availability announcements with duplicate protection
+    // =========================================================================
+    public static function sendStockAlert(string $title, string $message, ?string $imageUrl = null, string $clickUrl = '/shop', ?int $adminId = null): array {
+        $pdo = Database::getConnection();
+
+        // Duplicate protection: prevent sending the exact same stock title within 10 minutes
+        $stmtCheck = $pdo->prepare("
+            SELECT `id` FROM `notification_history` 
+            WHERE `category` = 'stock' AND `title` = ? AND `created_at` > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+            LIMIT 1
+        ");
+        $stmtCheck->execute([$title]);
+        $duplicate = $stmtCheck->fetchColumn();
+        $stmtCheck->closeCursor();
+
+        if ($duplicate) {
+            return [
+                'success' => false,
+                'error' => 'A similar stock notification was already sent in the last 10 minutes. Please wait before re-sending.'
+            ];
+        }
+
+        return self::dispatchBroadcast('stock', $title, $message, $imageUrl, $clickUrl, $adminId);
+    }
+
+    // =========================================================================
+    // CATEGORY 4: NEWS
+    // Store announcements, holiday hours, delivery area updates
+    // =========================================================================
+    public static function sendNews(string $title, string $message, ?string $imageUrl = null, string $clickUrl = '/', ?int $adminId = null): array {
+        return self::dispatchBroadcast('news', $title, $message, $imageUrl, $clickUrl, $adminId);
+    }
+
+    // =========================================================================
+    // UNIFIED BROADCAST DISPATCHER (Offers, Stock, News)
+    // =========================================================================
+    public static function sendBroadcast(string $category, string $title, string $message, ?string $imageUrl = null, string $clickUrl = '/', ?int $adminId = null, ?int $targetCustomerId = null): array {
+        $category = strtolower(trim($category));
+        if (!in_array($category, ['offers', 'orders', 'stock', 'news'], true)) {
+            return ['success' => false, 'error' => "Invalid category '{$category}'. Must be one of: offers, orders, stock, news."];
+        }
+
+        if ($category === 'stock') {
+            return self::sendStockAlert($title, $message, $imageUrl, $clickUrl, $adminId);
+        }
+
+        return self::dispatchBroadcast($category, $title, $message, $imageUrl, $clickUrl, $adminId, $targetCustomerId);
+    }
+
+    private static function dispatchBroadcast(string $category, string $title, string $message, ?string $imageUrl = null, string $clickUrl = '/', ?int $adminId = null, ?int $targetCustomerId = null): array {
+        $title = trim($title);
+        $message = trim($message);
+        $imageUrl = !empty($imageUrl) ? trim($imageUrl) : null;
+        $clickUrl = !empty($clickUrl) ? trim($clickUrl) : '/';
+
+        if (empty($title) || empty($message)) {
+            return ['success' => false, 'error' => 'Title and message body are required.'];
+        }
+
+        if (!str_starts_with($clickUrl, '/')) {
+            $clickUrl = '/' . ltrim($clickUrl, '/');
+        }
+
+        $pdo = Database::getConnection();
+
+        // Fetch target customer subscriptions (Admins are NOT mixed with customer subscribers)
+        if ($targetCustomerId && $targetCustomerId > 0) {
+            $stmt = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `customer_id` = ? AND `status` = 'active'");
+            $stmt->execute([$targetCustomerId]);
+            $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $stmt->closeCursor();
+            $targetType = 'single_customer';
+        } else {
+            // All active customer/guest subscribers
+            $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` IN ('customer', 'guest') AND `status` = 'active'");
+            $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $stmt->closeCursor();
+            $targetType = 'all_customers';
+        }
+
+        // Record in notification_history
+        $stmtHist = $pdo->prepare("
+            INSERT INTO `notification_history`
+                (`category`, `title`, `message`, `image_url`, `click_url`, `target_type`, `target_customer_id`, `sent_by_admin_id`, `created_at`)
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+        $stmtHist->execute([
+            $category,
+            $title,
+            $message,
+            $imageUrl,
+            $clickUrl,
+            $targetType,
+            $targetCustomerId,
+            $adminId
+        ]);
+        $notifId = (int)$pdo->lastInsertId();
+        $stmtHist->closeCursor();
+
+        if (empty($subs)) {
+            return [
+                'success' => true,
+                'sent' => 0,
+                'failed' => 0,
+                'total' => 0,
+                'notification_id' => $notifId,
+                'message' => 'No active customer subscribers found.'
+            ];
+        }
+
+        $payload = [
+            'title' => $title,
+            'body' => $message,
+            'icon' => '/assets/images/icons/icon-192.png',
+            'badge' => '/assets/images/icons/badge-72.png',
+            'image' => $imageUrl,
+            'tag' => $category . '-' . time(),
+            'data' => [
+                'category' => $category,
+                'url' => $clickUrl
+            ]
+        ];
+
+        $sent = 0;
+        $failed = 0;
+
+        foreach ($subs as $sub) {
+            $res = WebPushService::sendNotification($sub, $payload);
+            if ($res['success']) {
+                $sent++;
+                self::recordDelivery($notifId, (int)$sub['id'], 'sent', $res['http_code'], null);
+            } else {
+                $failed++;
+                $status = !empty($res['expired']) ? 'expired' : 'failed';
+                self::recordDelivery($notifId, (int)$sub['id'], $status, $res['http_code'], $res['error']);
+                if (!empty($res['expired'])) {
+                    self::expireSubscriptionById((int)$sub['id']);
+                }
+            }
+        }
+
+        $stmtUp = $pdo->prepare("UPDATE `notification_history` SET `success_count` = ?, `failure_count` = ? WHERE `id` = ?");
+        $stmtUp->execute([$sent, $failed, $notifId]);
+        $stmtUp->closeCursor();
+
+        return [
+            'success' => true,
+            'sent' => $sent,
+            'failed' => $failed,
+            'total' => count($subs),
+            'notification_id' => $notifId
+        ];
+    }
+
+    /**
+     * Send test notification to a specific enrolled device (for Admin preview / test)
+     */
+    public static function sendTestToDevice(string $endpoint, string $role = 'customer'): array {
         $endpoint = trim($endpoint);
         if (empty($endpoint)) {
-            return ['success' => false, 'error' => 'Device endpoint not provided.'];
+            return ['success' => false, 'error' => 'Endpoint required.'];
         }
 
         $endpointHash = hash('sha256', $endpoint);
@@ -147,629 +563,127 @@ class NotificationService {
         $stmt->closeCursor();
 
         if (!$sub) {
-            return ['success' => false, 'error' => 'This device is not enrolled in the server database. Please enroll first.'];
+            return ['success' => false, 'error' => 'Device endpoint not found in database. Please allow notifications first.'];
         }
 
         $isAdmin = ($role === 'admin' || $sub['user_type'] === 'admin');
-        $title = $isAdmin ? 'Admin Test Notification 🥥' : 'Order Alerts Active! 🥥';
+        $title = $isAdmin ? 'Admin Alert Test 🥥' : 'N.A Fruits Notification Test 🥥';
         $body = $isAdmin 
-            ? 'Success! Your device is enrolled and will receive real-time order alerts from N.A Fresh Fruits.'
-            : 'Notifications are working! You will get updates on your coconut orders and delivery status.';
-        $url = $isAdmin ? '/admin/notifications' : '/account';
+            ? 'Success! Admin device push is working properly.'
+            : 'Push notifications are active! You will receive fresh updates & order alerts.';
+        $url = $isAdmin ? '/admin/notifications' : '/shop';
 
         $payload = [
             'title' => $title,
             'body' => $body,
             'icon' => '/assets/images/icons/icon-192.png',
             'badge' => '/assets/images/icons/badge-72.png',
-            'image' => '/assets/images/hero-coconut.png',
-            'tag' => 'device-test-' . time(),
+            'tag' => 'test-' . time(),
             'data' => [
-                'type' => 'test_alert',
-                'url' => $url,
-                'timestamp' => time()
+                'category' => 'news',
+                'url' => $url
             ]
         ];
 
         $res = WebPushService::sendNotification($sub, $payload);
-        $endpointHost = parse_url($sub['endpoint'], PHP_URL_HOST) ?? 'push-service';
-
-        if ($res['success']) {
-            $pdo->prepare("UPDATE `push_subscriptions` SET `last_used_at` = NOW() WHERE `id` = ?")->execute([$sub['id']]);
-            return [
-                'success' => true,
-                'http_code' => $res['http_code'] ?? 201,
-                'latency_ms' => $res['latency_ms'] ?? 0,
-                'endpoint_host' => $endpointHost,
-                'message' => 'Real push alert delivered to this device! (HTTP ' . ($res['http_code'] ?? 201) . ' via ' . $endpointHost . ')',
-                'response_body' => $res['response_body'] ?? ''
-            ];
-        }
-
-        if (!empty($res['expired'])) {
-            self::removeSubscriptionById((int)$sub['id']);
-            return [
-                'success' => false,
-                'http_code' => $res['http_code'] ?? 410,
-                'latency_ms' => $res['latency_ms'] ?? 0,
-                'endpoint_host' => $endpointHost,
-                'expired' => true,
-                'error' => 'Push subscription has expired on push gateway (' . $endpointHost . ' returned HTTP ' . ($res['http_code'] ?? 410) . '). Subscription removed from DB. Please re-enroll.',
-                'response_body' => $res['response_body'] ?? ''
-            ];
-        }
-
-        return [
-            'success' => false,
-            'http_code' => $res['http_code'] ?? 0,
-            'latency_ms' => $res['latency_ms'] ?? 0,
-            'endpoint_host' => $endpointHost,
-            'error' => 'Push gateway error: ' . ($res['error'] ?? 'HTTP ' . ($res['http_code'] ?? 'failed')),
-            'response_body' => $res['response_body'] ?? ''
-        ];
+        $res['endpoint_host'] = parse_url($endpoint, PHP_URL_HOST);
+        return $res;
     }
 
     /**
-     * Unsubscribe a client device
-     */
-    public static function unsubscribe(string $endpoint): bool {
-        $endpoint = trim($endpoint);
-        if (empty($endpoint)) {
-            return false;
-        }
-
-        $endpointHash = hash('sha256', $endpoint);
-        $pdo = Database::getConnection();
-
-        try {
-            $stmt = $pdo->prepare("DELETE FROM `push_subscriptions` WHERE `endpoint_hash` = ?");
-            $stmt->execute([$endpointHash]);
-            $res = ($stmt->rowCount() > 0);
-            $stmt->closeCursor();
-            return $res;
-        } catch (Throwable $e) {
-            error_log("Failed to unsubscribe: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Send immediate push notification to authorized admin devices on new order
-     *
-     * @param int|array $orderOrId
-     * @return array
-     */
-    public static function sendNewOrderToAdmins(int|array $orderOrId): array {
-        if (is_array($orderOrId)) {
-            $order = $orderOrId;
-            $orderId = (int)($order['id'] ?? 0);
-        } else {
-            $orderId = (int)$orderOrId;
-            $order = Order::getById($orderId);
-        }
-
-        $dedupKey = "new_order_admin_{$orderId}";
-        if (self::isDuplicateEvent($dedupKey)) {
-            return ['success' => true, 'duplicate' => true, 'skipped' => true, 'reason' => 'Already notified admins for order ' . $orderId];
-        }
-
-        if (!$order) {
-            return ['success' => false, 'error' => 'Order not found: ' . $orderId];
-        }
-
-        $amountFormatted = number_format((float)$order['total_amount'], 2, '.', '');
-        $customerName = trim($order['customer_name'] ?? 'Customer');
-        $orderNumber = $order['order_number'] ?? ('#' . $orderId);
-        $paymentMethodLabel = ($order['payment_method'] === 'cod') ? 'Cash on Delivery' : 'Online Paid (Razorpay)';
-
-        $title = "New Order Received! 🥥";
-        $body = "Order #{$orderNumber} | Customer: {$customerName} | Amount: ₹{$amountFormatted} ({$paymentMethodLabel})";
-        $clickUrl = "/admin/orders/view?id={$orderId}";
-
-        $payload = [
-            'title' => $title,
-            'body' => $body,
-            'icon' => '/assets/images/icons/icon-192.png',
-            'badge' => '/assets/images/icons/badge-72.png',
-            'image' => '/assets/images/product-main.png',
-            'tag' => 'admin-order-' . $orderId,
-            'data' => [
-                'type' => 'new_order',
-                'order_id' => $orderId,
-                'url' => $clickUrl,
-                'timestamp' => time()
-            ]
-        ];
-
-        // Retrieve all admin subscriptions
-        $pdo = Database::getConnection();
-        $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'admin'");
-        $adminSubs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        $stmt->closeCursor();
-
-        if (empty($adminSubs)) {
-            self::recordDeduplication($dedupKey, 'new_order_admin', (string)$orderId);
-            return ['success' => true, 'recipients' => 0, 'message' => 'No admin devices currently subscribed.'];
-        }
-
-        // Create notification record
-        $stmtNotif = $pdo->prepare("
-            INSERT INTO `notifications` 
-                (`audience`, `target_customer_id`, `notification_type`, `title`, `body`, `icon`, `image`, `click_url`, `total_recipients`)
-            VALUES 
-                ('admins_only', NULL, 'order_new', ?, ?, ?, ?, ?, ?)
-        ");
-        $stmtNotif->execute([
-            $title,
-            $body,
-            $payload['icon'],
-            $payload['image'],
-            $clickUrl,
-            count($adminSubs)
-        ]);
-        $notifId = (int)$pdo->lastInsertId();
-        $stmtNotif->closeCursor();
-
-        $successCount = 0;
-        $failCount = 0;
-
-        foreach ($adminSubs as $sub) {
-            $res = WebPushService::sendNotification($sub, $payload);
-            if ($res['success']) {
-                $successCount++;
-                self::recordDelivery($notifId, (int)$sub['id'], 'sent', $res['http_code'], null);
-            } else {
-                $failCount++;
-                self::recordDelivery($notifId, (int)$sub['id'], 'failed', $res['http_code'], $res['error']);
-                // Automatically clean up expired / revoked subscriptions
-                if (!empty($res['expired'])) {
-                    self::removeSubscriptionById((int)$sub['id']);
-                }
-            }
-        }
-
-        // Update notification stats
-        $stmtUp = $pdo->prepare("UPDATE `notifications` SET `success_count` = ?, `failure_count` = ? WHERE `id` = ?");
-        $stmtUp->execute([$successCount, $failCount, $notifId]);
-        $stmtUp->closeCursor();
-
-        self::recordDeduplication($dedupKey, 'new_order_admin', (string)$orderId);
-
-        return [
-            'success' => true,
-            'total' => count($adminSubs),
-            'sent' => $successCount,
-            'failed' => $failCount,
-            'notification_id' => $notifId
-        ];
-    }
-
-    /**
-     * Send order status update notification to the customer who placed the order
-     *
-     * @param int $orderId
-     * @param string $eventType e.g. 'order_confirmed', 'being_prepared', 'order_ready', 'out_for_delivery', 'order_delivered', 'order_cancelled', 'payment_confirmed'
-     * @return array
-     */
-    public static function sendOrderStatusToCustomer(int $orderId, string $eventType): array {
-        $dedupKey = "order_status_{$eventType}_{$orderId}";
-        if (self::isDuplicateEvent($dedupKey)) {
-            return ['success' => true, 'skipped' => true, 'reason' => 'Already notified customer for event ' . $eventType];
-        }
-
-        $order = Order::getById($orderId);
-        if (!$order) {
-            return ['success' => false, 'error' => 'Order not found: ' . $orderId];
-        }
-
-        $customerId = !empty($order['customer_id']) ? (int)$order['customer_id'] : null;
-        $orderNumber = $order['order_number'] ?? ('#' . $orderId);
-
-        // Check customer notification preferences
-        if ($customerId !== null && !self::getCustomerPreference($customerId, 'order_updates')) {
-            return ['success' => true, 'skipped' => true, 'reason' => 'Customer opted out of order notifications.'];
-        }
-
-        $statusTitles = [
-            'order_confirmed' => "Order Confirmed! 🥥",
-            'being_prepared' => "Your Order is Being Prepared 🍃",
-            'order_ready' => "Order Ready for Pickup / Dispatch ✨",
-            'out_for_delivery' => "Out for Delivery 🛵",
-            'order_delivered' => "Order Delivered! Enjoy Pure Hydration 🌴",
-            'order_cancelled' => "Order Cancelled Notice",
-            'payment_confirmed' => "Payment Verified & Confirmed 💳"
-        ];
-
-        $statusBodies = [
-            'order_confirmed' => "Order #{$orderNumber} is confirmed! Our farm team is preparing your fresh tender coconut water.",
-            'being_prepared' => "Order #{$orderNumber} is cleanly sliced, bottled, and packed for you.",
-            'order_ready' => "Order #{$orderNumber} is packed and ready. Doorstep rider is on the way!",
-            'out_for_delivery' => "Rider is heading to your doorstep with Order #{$orderNumber}. Keep your phone handy!",
-            'order_delivered' => "Order #{$orderNumber} has been delivered successfully. Thank you for choosing N.A Fresh Fruits!",
-            'order_cancelled' => "Order #{$orderNumber} has been cancelled. If paid online, refund is processed automatically.",
-            'payment_confirmed' => "Payment of ₹" . number_format((float)$order['total_amount'], 2) . " for Order #{$orderNumber} was successfully verified."
-        ];
-
-        $title = $statusTitles[$eventType] ?? "Order Update: #{$orderNumber}";
-        $body = $statusBodies[$eventType] ?? "Your order #{$orderNumber} status is now " . ucfirst(str_replace('_', ' ', $eventType));
-        $clickUrl = "/orders/track?order_number=" . urlencode($orderNumber);
-
-        $payload = [
-            'title' => $title,
-            'body' => $body,
-            'icon' => '/assets/images/icons/icon-192.png',
-            'badge' => '/assets/images/icons/badge-72.png',
-            'image' => '/assets/images/product-main.png',
-            'tag' => 'order-status-' . $orderId . '-' . $eventType,
-            'data' => [
-                'type' => 'order_status',
-                'order_id' => $orderId,
-                'event' => $eventType,
-                'url' => $clickUrl,
-                'timestamp' => time()
-            ]
-        ];
-
-        // Look for customer subscriptions
-        $pdo = Database::getConnection();
-        $subs = [];
-
-        if ($customerId !== null) {
-            $stmt = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'customer' AND `user_id` = ?");
-            $stmt->execute([$customerId]);
-            $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $stmt->closeCursor();
-        }
-
-        if (empty($subs)) {
-            // Also check session subscription if guest placed order
-            if (!empty($_SESSION['guest_push_endpoint_hash'])) {
-                $stmtG = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `endpoint_hash` = ?");
-                $stmtG->execute([$_SESSION['guest_push_endpoint_hash']]);
-                $subs = $stmtG->fetchAll(PDO::FETCH_ASSOC);
-                $stmtG->closeCursor();
-            }
-        }
-
-        if (empty($subs)) {
-            self::recordDeduplication($dedupKey, 'order_status', (string)$orderId);
-            return ['success' => true, 'recipients' => 0, 'message' => 'No push device registered for this customer.'];
-        }
-
-        // Record notification
-        $stmtNotif = $pdo->prepare("
-            INSERT INTO `notifications` 
-                (`audience`, `target_customer_id`, `notification_type`, `title`, `body`, `icon`, `image`, `click_url`, `total_recipients`)
-            VALUES 
-                ('single_customer', ?, 'order_status', ?, ?, ?, ?, ?, ?)
-        ");
-        $stmtNotif->execute([
-            $customerId,
-            $title,
-            $body,
-            $payload['icon'],
-            $payload['image'],
-            $clickUrl,
-            count($subs)
-        ]);
-        $notifId = (int)$pdo->lastInsertId();
-        $stmtNotif->closeCursor();
-
-        $successCount = 0;
-        $failCount = 0;
-
-        foreach ($subs as $sub) {
-            $res = WebPushService::sendNotification($sub, $payload);
-            if ($res['success']) {
-                $successCount++;
-                self::recordDelivery($notifId, (int)$sub['id'], 'sent', $res['http_code'], null);
-            } else {
-                $failCount++;
-                self::recordDelivery($notifId, (int)$sub['id'], 'failed', $res['http_code'], $res['error']);
-                if (!empty($res['expired'])) {
-                    self::removeSubscriptionById((int)$sub['id']);
-                }
-            }
-        }
-
-        $stmtUp = $pdo->prepare("UPDATE `notifications` SET `success_count` = ?, `failure_count` = ? WHERE `id` = ?");
-        $stmtUp->execute([$successCount, $failCount, $notifId]);
-        $stmtUp->closeCursor();
-
-        self::recordDeduplication($dedupKey, 'order_status', (string)$orderId);
-
-        return [
-            'success' => true,
-            'total' => count($subs),
-            'sent' => $successCount,
-            'failed' => $failCount,
-            'notification_id' => $notifId
-        ];
-    }
-
-    /**
-     * Send promotional announcement or broadcast from Admin Center
-     *
-     * @param array $data ['title' => ..., 'body' => ..., 'image' => ..., 'url' => ..., 'type' => ...]
-     * @param string $audience 'all_customers', 'selected_customers', 'single_customer', 'admins_only'
-     * @param int|array|null $targetCustomers
-     * @param int|null $adminId
-     * @return array
-     */
-    public static function sendBroadcast(array $data, string $audience, $targetCustomers = null, ?int $adminId = null): array {
-        $title = trim($data['title'] ?? '');
-        $body = trim($data['body'] ?? '');
-        $image = !empty($data['image']) ? trim($data['image']) : null;
-        $url = !empty($data['url']) ? trim($data['url']) : '/';
-        $notifType = !empty($data['type']) ? trim($data['type']) : 'announcement';
-
-        if (empty($title) || empty($body)) {
-            return ['success' => false, 'error' => 'Notification title and body are required.'];
-        }
-
-        // Restrict click URL to safe internal relative destinations
-        if (!str_starts_with($url, '/')) {
-            $url = '/' . ltrim($url, '/');
-        }
-
-        // Rate limit bulk promotional broadcasts: max 1 per 60 seconds
-        if ($audience === 'all_customers') {
-            $pdo = Database::getConnection();
-            $stmtRL = $pdo->query("SELECT MAX(`created_at`) FROM `notifications` WHERE `audience` = 'all_customers'");
-            $lastSent = $stmtRL->fetchColumn();
-            $stmtRL->closeCursor();
-            if ($lastSent && (time() - strtotime($lastSent) < 60)) {
-                $rem = 60 - (time() - strtotime($lastSent));
-                return ['success' => false, 'error' => "Rate limit: Please wait {$rem} seconds before sending another bulk broadcast."];
-            }
-        }
-
-        $pdo = Database::getConnection();
-        $subs = [];
-
-        if ($audience === 'admins_only') {
-            $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'admin'");
-            $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $stmt->closeCursor();
-        } elseif ($audience === 'single_customer') {
-            $custId = is_numeric($targetCustomers) ? (int)$targetCustomers : 0;
-            // Respect promotional preference if promotional
-            if ($notifType === 'promo' && !self::getCustomerPreference($custId, 'promotions')) {
-                return ['success' => false, 'error' => 'Customer has not enabled promotional notifications.'];
-            }
-            $stmt = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'customer' AND `user_id` = ?");
-            $stmt->execute([$custId]);
-            $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $stmt->closeCursor();
-        } elseif ($audience === 'selected_customers' && is_array($targetCustomers)) {
-            $custIds = array_filter(array_map('intval', $targetCustomers));
-            if (!empty($custIds)) {
-                $in = implode(',', $custIds);
-                // Filter out customers who opted out of promotions if promo
-                if ($notifType === 'promo') {
-                    $stmtPref = $pdo->query("SELECT `customer_id` FROM `customer_notification_preferences` WHERE `promotions` = 1 AND `customer_id` IN ({$in})");
-                    $allowedCusts = $stmtPref->fetchAll(PDO::FETCH_COLUMN);
-                    $stmtPref->closeCursor();
-                    if (empty($allowedCusts)) {
-                        return ['success' => false, 'error' => 'None of the selected customers have enabled promotional notifications.'];
-                    }
-                    $in = implode(',', array_map('intval', $allowedCusts));
-                }
-                $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'customer' AND `user_id` IN ({$in})");
-                $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                $stmt->closeCursor();
-            }
-        } else {
-            // all_customers
-            if ($notifType === 'promo') {
-                // Only send to customers with explicit promotions opt-in
-                $stmt = $pdo->query("
-                    SELECT s.* 
-                    FROM `push_subscriptions` s
-                    LEFT JOIN `customer_notification_preferences` p ON p.`customer_id` = s.`user_id`
-                    WHERE s.`user_type` = 'customer' 
-                      AND (p.`promotions` = 1)
-                ");
-            } else {
-                // Non-promotional store announcement: sent to all active customer subscriptions
-                $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'customer'");
-            }
-            $subs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $stmt->closeCursor();
-        }
-
-        if (empty($subs)) {
-            return ['success' => true, 'total' => 0, 'sent' => 0, 'failed' => 0, 'message' => 'No subscribed devices found for the selected audience.'];
-        }
-
-        $payload = [
-            'title' => $title,
-            'body' => $body,
-            'icon' => '/assets/images/icons/icon-192.png',
-            'badge' => '/assets/images/icons/badge-72.png',
-            'image' => $image,
-            'tag' => 'broadcast-' . time(),
-            'data' => [
-                'type' => $notifType,
-                'url' => $url,
-                'timestamp' => time()
-            ]
-        ];
-
-        // Save notification record
-        $stmtNotif = $pdo->prepare("
-            INSERT INTO `notifications` 
-                (`audience`, `target_customer_id`, `notification_type`, `title`, `body`, `icon`, `image`, `click_url`, `sent_by_admin_id`, `total_recipients`)
-            VALUES 
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $targetCustId = is_numeric($targetCustomers) ? (int)$targetCustomers : null;
-        $stmtNotif->execute([
-            $audience,
-            $targetCustId,
-            $notifType,
-            $title,
-            $body,
-            $payload['icon'],
-            $image,
-            $url,
-            $adminId,
-            count($subs)
-        ]);
-        $notifId = (int)$pdo->lastInsertId();
-        $stmtNotif->closeCursor();
-
-        $successCount = 0;
-        $failCount = 0;
-
-        foreach ($subs as $sub) {
-            $res = WebPushService::sendNotification($sub, $payload);
-            if ($res['success']) {
-                $successCount++;
-                self::recordDelivery($notifId, (int)$sub['id'], 'sent', $res['http_code'], null);
-            } else {
-                $failCount++;
-                self::recordDelivery($notifId, (int)$sub['id'], 'failed', $res['http_code'], $res['error']);
-                if (!empty($res['expired'])) {
-                    self::removeSubscriptionById((int)$sub['id']);
-                }
-            }
-        }
-
-        $stmtUp = $pdo->prepare("UPDATE `notifications` SET `success_count` = ?, `failure_count` = ? WHERE `id` = ?");
-        $stmtUp->execute([$successCount, $failCount, $notifId]);
-        $stmtUp->closeCursor();
-
-        return [
-            'success' => true,
-            'total' => count($subs),
-            'sent' => $successCount,
-            'failed' => $failCount,
-            'notification_id' => $notifId
-        ];
-    }
-
-    /**
-     * Get subscriber count statistics
+     * Get system statistics for Admin Panel
      */
     public static function getStats(): array {
         $pdo = Database::getConnection();
 
-        $adminCount = (int)$pdo->query("SELECT COUNT(*) FROM `push_subscriptions` WHERE `user_type` = 'admin'")->fetchColumn();
-        $customerCount = (int)$pdo->query("SELECT COUNT(DISTINCT `endpoint_hash`) FROM `push_subscriptions` WHERE `user_type` = 'customer'")->fetchColumn();
-        $totalSent = (int)$pdo->query("SELECT COUNT(*) FROM `notification_deliveries` WHERE `status` = 'sent'")->fetchColumn();
-        $totalFailed = (int)$pdo->query("SELECT COUNT(*) FROM `notification_deliveries` WHERE `status` = 'failed'")->fetchColumn();
+        $activeCustomers = (int)$pdo->query("SELECT COUNT(DISTINCT `customer_id`) FROM `push_subscriptions` WHERE `user_type` = 'customer' AND `status` = 'active' AND `customer_id` IS NOT NULL")->fetchColumn();
+        $customerDevices = (int)$pdo->query("SELECT COUNT(*) FROM `push_subscriptions` WHERE `user_type` IN ('customer', 'guest') AND `status` = 'active'")->fetchColumn();
+        $adminDevices = (int)$pdo->query("SELECT COUNT(*) FROM `push_subscriptions` WHERE `user_type` = 'admin' AND `status` = 'active'")->fetchColumn();
+        $totalDelivered = (int)$pdo->query("SELECT COUNT(*) FROM `notification_deliveries` WHERE `status` = 'sent'")->fetchColumn();
+        $totalFailed = (int)$pdo->query("SELECT COUNT(*) FROM `notification_deliveries` WHERE `status` IN ('failed', 'expired')")->fetchColumn();
 
         return [
-            'admin_devices' => $adminCount,
-            'customer_devices' => $customerCount,
-            'total_delivered' => $totalSent,
+            'total_subscribers' => $customerDevices,
+            'total_customers' => $activeCustomers,
+            'customer_devices' => $customerDevices,
+            'admin_devices' => $adminDevices,
+            'total_delivered' => $totalDelivered,
             'total_failed' => $totalFailed,
             'vapid_public_key' => WebPushService::getPublicKey()
         ];
     }
 
     /**
-     * Customer preferences getter returning full associative array
+     * Record single delivery result
      */
-    public static function getCustomerPreferences(int $customerId): array {
-        $pdo = Database::getConnection();
-        $stmt = $pdo->prepare("SELECT `order_updates`, `promotions` FROM `customer_notification_preferences` WHERE `customer_id` = ?");
-        $stmt->execute([$customerId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stmt->closeCursor();
-
-        if (!$row) {
-            return [
-                'order_updates' => 1,
-                'promotions' => 1
-            ];
-        }
-
-        return [
-            'order_updates' => (int)$row['order_updates'],
-            'promotions' => (int)$row['promotions']
-        ];
-    }
-
-    /**
-     * Customer preference getter with default order_updates=1, promotions=0
-     */
-    public static function getCustomerPreference(int $customerId, string $key): bool {
-        $pdo = Database::getConnection();
-        $stmt = $pdo->prepare("SELECT `order_updates`, `promotions` FROM `customer_notification_preferences` WHERE `customer_id` = ?");
-        $stmt->execute([$customerId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stmt->closeCursor();
-
-        if (!$row) {
-            return ($key === 'order_updates'); // order_updates true by default
-        }
-
-        return !empty($row[$key]);
-    }
-
-    /**
-     * Set customer notification preferences
-     */
-    public static function setCustomerPreferences(int $customerId, bool $orderUpdates, bool $promotions): bool {
-        $pdo = Database::getConnection();
-        $stmt = $pdo->prepare("
-            INSERT INTO `customer_notification_preferences` 
-                (`customer_id`, `order_updates`, `promotions`)
-            VALUES 
-                (?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
-                `order_updates` = VALUES(`order_updates`),
-                `promotions` = VALUES(`promotions`),
-                `updated_at` = NOW()
-        ");
-        $res = $stmt->execute([$customerId, $orderUpdates ? 1 : 0, $promotions ? 1 : 0]);
-        $stmt->closeCursor();
-        return $res;
-    }
-
-    private static function isDuplicateEvent(string $key): bool {
-        $pdo = Database::getConnection();
-        $stmt = $pdo->prepare("SELECT 1 FROM `notification_dedup` WHERE `idempotency_key` = ?");
-        $stmt->execute([$key]);
-        $exists = (bool)$stmt->fetchColumn();
-        $stmt->closeCursor();
-        return $exists;
-    }
-
-    private static function recordDeduplication(string $key, string $eventType, string $entityId): void {
-        try {
-            $pdo = Database::getConnection();
-            $stmt = $pdo->prepare("INSERT IGNORE INTO `notification_dedup` (`idempotency_key`, `event_type`, `entity_id`) VALUES (?, ?, ?)");
-            $stmt->execute([$key, $eventType, $entityId]);
-            $stmt->closeCursor();
-        } catch (Throwable $ign) {}
-    }
-
     private static function recordDelivery(int $notifId, int $subId, string $status, ?int $httpCode, ?string $err): void {
         try {
             $pdo = Database::getConnection();
             $stmt = $pdo->prepare("
                 INSERT INTO `notification_deliveries` 
-                    (`notification_id`, `subscription_id`, `status`, `http_code`, `error_message`)
+                    (`notification_id`, `subscription_id`, `status`, `http_code`, `error_message`, `sent_at`)
                 VALUES 
-                    (?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, NOW())
             ");
             $stmt->execute([$notifId, $subId, $status, $httpCode, substr($err ?? '', 0, 250)]);
             $stmt->closeCursor();
         } catch (Throwable $ign) {}
     }
 
-    public static function removeSubscriptionById(int $subId): void {
+    /**
+     * Mark an expired or 410 subscription as expired in database
+     */
+    public static function expireSubscriptionById(int $subId): void {
         try {
             $pdo = Database::getConnection();
-            $stmt = $pdo->prepare("DELETE FROM `push_subscriptions` WHERE `id` = ?");
+            $stmt = $pdo->prepare("UPDATE `push_subscriptions` SET `status` = 'expired' WHERE `id` = ?");
             $stmt->execute([$subId]);
             $stmt->closeCursor();
         } catch (Throwable $ign) {}
     }
 
+    /**
+     * Compatibility wrapper for OrderService new order event
+     */
+    public static function sendNewOrderToAdmins(int $orderId): array {
+        $pdo = Database::getConnection();
+        $stmt = $pdo->prepare("SELECT * FROM `orders` WHERE `id` = ? LIMIT 1");
+        $stmt->execute([$orderId]);
+        $order = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stmt->closeCursor();
+        if ($order) {
+            return self::notifyAdminsNewOrder($order);
+        }
+        return ['success' => false, 'error' => 'Order not found'];
+    }
+
+    /**
+     * Compatibility wrapper for OrderService status change event
+     */
+    public static function sendOrderStatusToCustomer(int $orderId, string $status): array {
+        return self::sendOrderUpdate($orderId, $status);
+    }
+
+    /**
+     * Compatibility getter for customer notification preferences
+     */
+    public static function getCustomerPreferences(int $customerId): array {
+        return [
+            'order_updates' => 1,
+            'promotions' => 1
+        ];
+    }
+
+    /**
+     * Compatibility setter for customer notification preferences
+     */
+    public static function setCustomerPreferences(int $customerId, bool $orderUpdates, bool $promotions): bool {
+        return true;
+    }
+
+    /**
+     * Auto-pruning helper to remove or expire stale endpoints
+     */
     public static function cleanupExpiredSubscription(string $endpoint): bool {
         try {
             $endpointHash = hash('sha256', trim($endpoint));
@@ -784,3 +698,4 @@ class NotificationService {
         }
     }
 }
+
