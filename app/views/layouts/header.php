@@ -31,7 +31,7 @@ $storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
     <meta name="csrf-token" content="<?= e(csrf_token()) ?>">
 
     <!-- PWA & Push Notification Script -->
-    <script src="/assets/js/pwa-push.js" defer></script>
+    <script src="/assets/js/pwa-install.js" defer></script>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>

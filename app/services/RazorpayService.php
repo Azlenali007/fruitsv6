@@ -528,6 +528,134 @@ class RazorpayService {
     }
 
     // =========================================================================
+    // Blinkit-Style Dynamic UPI QR Code Generation & Verification
+    // =========================================================================
+
+    /**
+     * Create Razorpay Dynamic UPI QR Code for Order on Delivery
+     * Endpoint: POST /v1/payments/qr_codes
+     */
+    public static function createDynamicQr(float $amountRupees, string $orderNumber, int $orderId): array {
+        $settings = self::getSettings();
+        if (empty($settings['key_id']) || empty($settings['key_secret'])) {
+            return [
+                'success' => false,
+                'error' => 'Razorpay API credentials are not configured. Store Admin must set Key ID and Key Secret in Admin Settings.'
+            ];
+        }
+
+        $amountPaise = (int)round($amountRupees * 100);
+        $payload = [
+            'type' => 'upi_qr',
+            'name' => 'N.A Fresh Fruits & Coconuts',
+            'usage' => 'single_use',
+            'fixed_amount' => true,
+            'payment_amount' => $amountPaise,
+            'description' => 'Payment for Order #' . $orderNumber,
+            'notes' => [
+                'order_id' => (string)$orderId,
+                'order_number' => (string)$orderNumber,
+                'purpose' => 'Delivery Boy Doorstep Collection'
+            ]
+        ];
+
+        $res = self::request('POST', '/payments/qr_codes', $payload, $settings['key_id'], $settings['key_secret']);
+        if (!$res['success']) {
+            return [
+                'success' => false,
+                'error' => $res['error'] ?? 'Failed to generate Dynamic QR from Razorpay.',
+                'raw' => $res['data'] ?? null,
+                'requires_merchant_activation' => true,
+                'help_text' => 'Dynamic UPI QR requires live Razorpay credentials with the UPI QR product activated on your Razorpay Merchant Dashboard.'
+            ];
+        }
+
+        $qrData = $res['data'] ?? [];
+        $qrId = $qrData['id'] ?? '';
+        $imageUrl = $qrData['image_url'] ?? '';
+
+        // Persist in delivery_dynamic_qrs
+        $pdo = Database::getConnection();
+        $ins = $pdo->prepare("
+            INSERT INTO delivery_dynamic_qrs (
+                order_id, razorpay_qr_id, qr_image_url, amount, status, api_response_raw, created_at
+            ) VALUES (?, ?, ?, ?, 'active', ?, NOW())
+        ");
+        $ins->execute([$orderId, $qrId, $imageUrl, $amountRupees, json_encode($qrData)]);
+
+        return [
+            'success' => true,
+            'qr_id' => $qrId,
+            'qr_image_url' => $imageUrl,
+            'amount' => $amountRupees
+        ];
+    }
+
+    /**
+     * Fetch payments received against a Razorpay Dynamic QR
+     * Endpoint: GET /v1/payments/qr_codes/{qr_id}/payments
+     */
+    public static function checkDynamicQrPayment(string $qrId, int $orderId): array {
+        $settings = self::getSettings();
+        if (empty($settings['key_id']) || empty($settings['key_secret'])) {
+            return ['success' => false, 'error' => 'Razorpay credentials missing.'];
+        }
+
+        $res = self::request('GET', '/payments/qr_codes/' . urlencode($qrId) . '/payments', [], $settings['key_id'], $settings['key_secret']);
+        if (!$res['success']) {
+            return ['success' => false, 'error' => $res['error'] ?? 'Failed to fetch QR payment status.'];
+        }
+
+        $paymentsList = $res['data']['items'] ?? [];
+        foreach ($paymentsList as $payment) {
+            $status = $payment['status'] ?? '';
+            $paymentId = $payment['id'] ?? '';
+            $paidPaise = (int)($payment['amount'] ?? 0);
+
+            if (in_array($status, ['captured', 'authorized'], true)) {
+                // Update QR status in database
+                $pdo = Database::getConnection();
+                $pdo->prepare("UPDATE delivery_dynamic_qrs SET status = 'paid', razorpay_payment_id = ? WHERE razorpay_qr_id = ?")->execute([$paymentId, $qrId]);
+
+                // Update Order payment status
+                Order::updatePaymentAndOrderStatus($orderId, 'captured', null, [
+                    'razorpay_payment_id' => $paymentId
+                ]);
+
+                // Update invoice
+                $order = Order::getById($orderId);
+                if ($order) {
+                    Invoice::createForOrder($order, $paymentId);
+                }
+
+                // Log timeline
+                DeliveryDispatchService::logTimeline(
+                    $orderId,
+                    null,
+                    'qr_paid',
+                    'Razorpay Dynamic QR Payment Verified',
+                    "Customer scanned and paid ₹" . ($paidPaise / 100) . " via UPI Dynamic QR (Payment ID: {$paymentId}).",
+                    'system',
+                    null
+                );
+
+                return [
+                    'success' => true,
+                    'is_paid' => true,
+                    'payment_id' => $paymentId,
+                    'amount' => $paidPaise / 100
+                ];
+            }
+        }
+
+        return [
+            'success' => true,
+            'is_paid' => false,
+            'message' => 'No payment received yet on this QR.'
+        ];
+    }
+
+    // =========================================================================
     // Low-Level Native cURL Transport
     // =========================================================================
 

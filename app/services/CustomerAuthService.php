@@ -77,7 +77,6 @@ class CustomerAuthService {
         $_SESSION[self::SESSION_CUSTOMER_NAME] = $customer['name'];
         $_SESSION[self::SESSION_CUSTOMER_PHONE] = $customer['phone'];
         $_SESSION[self::SESSION_CUSTOMER_EMAIL] = $customer['email'];
-        $_SESSION['show_push_prompt_after_auth'] = true;
 
         Customer::recordLoginAttempt($identifier, $ip, true);
         Customer::clearLoginAttempts($identifier, $ip);
@@ -174,7 +173,6 @@ class CustomerAuthService {
         $_SESSION[self::SESSION_CUSTOMER_NAME] = $name;
         $_SESSION[self::SESSION_CUSTOMER_PHONE] = '+91 ' . $cleanPhone;
         $_SESSION[self::SESSION_CUSTOMER_EMAIL] = $email;
-        $_SESSION['show_push_prompt_after_auth'] = true;
 
         Customer::updateLastLogin($customerId);
 

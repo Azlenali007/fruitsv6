@@ -2,28 +2,59 @@
 /**
  * Track Order View
  * N.A Fresh Fruits & Coconuts
+ * Blinkit-Style Live GPS & OTP Order Tracking
  */
 $pageTitle = 'Track Order - N.A Fresh Fruits & Coconuts';
 $activePage = 'track';
 require_once __DIR__ . '/layouts/header.php';
 
-$searched = !empty($_GET['num']) || !empty($_GET['phone']);
+$searched = !empty($_GET['num']) || !empty($_GET['phone']) || !empty($_GET['h']);
 $order = $foundOrder ?? null;
+
+$rider = null;
+$otpInfo = null;
+$timeline = [];
+if ($order) {
+    if (!empty($order['delivery_boy_id'])) {
+        $rider = DeliveryBoy::getById((int)$order['delivery_boy_id']);
+    }
+    $otpInfo = DeliveryDispatchService::getOtpInfo((int)$order['id']);
+    $timeline = DeliveryDispatchService::getTimeline((int)$order['id']);
+}
 ?>
 
-<div class="max-w-xl mx-auto px-4 py-6 sm:py-10">
+<!-- Include Leaflet CSS & JS for Live Blinkit Tracking Map -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<div class="max-w-xl mx-auto px-4 py-6 sm:py-10" x-data="customerTracker(<?= htmlspecialchars(json_encode([
+    'orderId' => $order ? (int)$order['id'] : null,
+    'trackingHash' => $order['tracking_hash'] ?? '',
+    'workflowStatus' => $order['delivery_workflow_status'] ?? 'unassigned',
+    'fulfilmentMethod' => $order['fulfilment_method'] ?? 'delivery',
+    'customerLat' => !empty($order['latitude']) ? (float)$order['latitude'] : 23.8940,
+    'customerLng' => !empty($order['longitude']) ? (float)$order['longitude'] : 75.1350,
+    'riderLat' => $rider && $rider['current_lat'] ? (float)$rider['current_lat'] : null,
+    'riderLng' => $rider && $rider['current_lng'] ? (float)$rider['current_lng'] : null,
+    'plainOtp' => $otpInfo['plain_otp_for_dev'] ?? null,
+    'isOtpVerified' => !empty($otpInfo['verified_at'])
+]), ENT_QUOTES, 'UTF-8') ?>)">
     
-    <div class="text-center mb-8">
+    <div class="text-center mb-6">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 mb-2">
+            ⚡ 10-25 Min Fresh Harvest Delivery
+        </span>
         <h1 class="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-            Track Your Order
+            Live Order Tracking
         </h1>
         <p class="text-xs sm:text-sm text-gray-500 mt-1 max-w-sm mx-auto">
-            Check the live preparation and delivery status of your fresh tender coconut water.
+            Real-time GPS tracking and live harvest status from N.A store counter to your doorstep.
         </p>
     </div>
 
-    <!-- Search Form -->
-    <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-xs mb-8" x-data="{ tab: 'number' }">
+    <!-- Search Form (if not searching by direct link) -->
+    <?php if (!$searched || !$order): ?>
+    <div class="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm mb-6" x-data="{ tab: 'number' }">
         <div class="flex border-b border-gray-100 pb-3 mb-4 gap-4 text-xs font-bold">
             <button type="button" @click="tab = 'number'" :class="tab === 'number' ? 'text-brand-600 border-b-2 border-brand-600 pb-1' : 'text-gray-400 hover:text-gray-600'">
                 By Order Number
@@ -57,136 +88,320 @@ $order = $foundOrder ?? null;
             </div>
 
             <button type="submit" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm py-3 px-4 rounded-xl shadow-xs transition">
-                Find Order
+                Find My Order &rarr;
             </button>
         </form>
     </div>
+    <?php endif; ?>
 
     <!-- Order Result Display -->
     <?php if ($searched && $order): ?>
-    <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-6">
+    <div class="space-y-5">
         
-        <!-- Status Header -->
-        <div class="flex flex-col sm:flex-row justify-between sm:items-center pb-4 border-b border-gray-100 gap-2">
+        <!-- Order Header Card -->
+        <div class="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-3">
             <div>
-                <span class="text-xs font-bold text-gray-400 uppercase">Order ID</span>
-                <h2 class="text-xl font-extrabold text-gray-900">#<?= e($order['order_number']) ?></h2>
+                <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order Reference</span>
+                <h2 class="text-xl sm:text-2xl font-black text-gray-900">#<?= e($order['order_number']) ?></h2>
+                <span class="text-xs text-gray-500 block mt-0.5">Placed on <?= date('d M Y, h:i A', strtotime($order['created_at'])) ?></span>
             </div>
-            <div>
-                <?php
-                $statusColors = [
-                    'pending' => 'bg-yellow-50 text-yellow-800 border-yellow-200',
-                    'confirmed' => 'bg-emerald-50 text-emerald-800 border-emerald-200',
-                    'delivered' => 'bg-blue-50 text-blue-800 border-blue-200',
-                    'cancelled' => 'bg-red-50 text-red-800 border-red-200',
-                ];
-                $color = $statusColors[$order['order_status']] ?? 'bg-gray-100 text-gray-800';
-                ?>
-                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold uppercase border <?= $color ?>">
-                    <?= e(ucfirst($order['order_status'])) ?>
+            
+            <div class="flex items-center gap-2">
+                <span class="px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border shadow-xs"
+                      :class="statusBadgeClass"
+                      x-text="statusBadgeText">
+                    <?= e(strtoupper(str_replace('_', ' ', $order['delivery_workflow_status'] !== 'unassigned' ? $order['delivery_workflow_status'] : $order['order_status']))) ?>
                 </span>
             </div>
         </div>
 
-        <!-- Visual Timeline / Progress Bar -->
-        <?php if ($order['order_status'] !== 'cancelled'): ?>
-        <?php
-        $steps = ['pending', 'confirmed', 'delivered'];
-        $currentIdx = array_search($order['order_status'], $steps);
-        if ($currentIdx === false) $currentIdx = 1;
-        ?>
-        <div class="py-2">
-            <div class="flex justify-between items-center relative">
-                <div class="absolute left-6 right-6 top-1/2 -translate-y-1/2 h-1 bg-gray-200 -z-0">
-                    <div class="h-full bg-brand-600 transition-all duration-500" style="width: <?= $currentIdx === 0 ? '0%' : ($currentIdx === 1 ? '50%' : '100%') ?>;"></div>
-                </div>
-
-                <!-- Step 1: Placed -->
-                <div class="relative z-10 flex flex-col items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs <?= $currentIdx >= 0 ? 'bg-brand-600 text-white ring-4 ring-emerald-50' : 'bg-gray-200 text-gray-500' ?>">
-                        ✓
-                    </div>
-                    <span class="text-[11px] font-semibold text-gray-700 mt-2">Placed</span>
-                </div>
-
-                <!-- Step 2: Confirmed / Preparing -->
-                <div class="relative z-10 flex flex-col items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs <?= $currentIdx >= 1 ? 'bg-brand-600 text-white ring-4 ring-emerald-50' : 'bg-gray-200 text-gray-500' ?>">
-                        <?= $currentIdx >= 1 ? '✓' : '2' ?>
-                    </div>
-                    <span class="text-[11px] font-semibold text-gray-700 mt-2">Confirmed</span>
-                </div>
-
-                <!-- Step 3: Delivered -->
-                <div class="relative z-10 flex flex-col items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs <?= $currentIdx >= 2 ? 'bg-brand-600 text-white ring-4 ring-emerald-50' : 'bg-gray-200 text-gray-500' ?>">
-                        <?= $currentIdx >= 2 ? '✓' : '3' ?>
-                    </div>
-                    <span class="text-[11px] font-semibold text-gray-700 mt-2">Delivered</span>
-                </div>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Order Information Details -->
-        <div class="grid grid-cols-2 gap-4 text-xs bg-gray-50 p-4 rounded-2xl">
-            <div>
-                <span class="text-gray-400 font-semibold block">Estimated Fulfilment</span>
-                <span class="font-bold text-gray-800"><?= e($order['estimated_delivery'] ?? 'Today') ?></span>
-            </div>
-            <div>
-                <span class="text-gray-400 font-semibold block">Payment Method</span>
-                <span class="font-bold text-gray-800 uppercase"><?= e($order['payment_method']) ?> (<?= e(ucfirst($order['payment_status'])) ?>)</span>
-            </div>
-            <div class="col-span-2">
-                <span class="text-gray-400 font-semibold block">Delivery Address / Fulfilment</span>
-                <span class="font-medium text-gray-700"><?= e($order['delivery_address'] ?: 'Shop Pickup at N.A Store') ?></span>
-            </div>
-        </div>
-
-        <!-- Items Snapshot -->
-        <div class="space-y-2 text-xs">
-            <span class="font-bold text-gray-400 uppercase text-[11px]">Items Snapshot</span>
-            <?php foreach ($order['items'] as $item): ?>
-            <div class="flex justify-between items-center text-gray-700 border-b border-gray-50 pb-2">
-                <span><?= (int)$item['quantity'] ?>x <?= e($item['product_name']) ?> (₹<?= number_format($item['unit_price']) ?>/pc)</span>
-                <span class="font-bold text-gray-900">₹<?= number_format($item['subtotal']) ?></span>
-            </div>
-            <?php endforeach; ?>
-            <div class="flex justify-between items-center text-sm font-extrabold text-gray-950 pt-2">
-                <span>Total Amount</span>
-                <span class="text-brand-700 text-base">₹<?= number_format($order['total_amount']) ?></span>
-            </div>
-        </div>
-
-        <!-- Status Change History Logs -->
-        <?php if (!empty($order['history'])): ?>
-        <div class="border-t border-gray-100 pt-4 space-y-2 text-xs">
-            <span class="font-bold text-gray-400 uppercase text-[11px]">Status Updates</span>
-            <ul class="space-y-2 text-gray-600">
-                <?php foreach ($order['history'] as $h): ?>
-                <li class="flex items-start gap-2">
-                    <span class="w-1.5 h-1.5 rounded-full bg-brand-500 mt-1.5 shrink-0"></span>
+        <!-- BLINKIT-STYLE CUSTOMER DELIVERY OTP BANNER -->
+        <template x-if="workflowStatus === 'out_for_delivery' || workflowStatus === 'picked_up'">
+            <div class="bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-3xl p-5 shadow-lg relative overflow-hidden">
+                <div class="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
                     <div>
-                        <span class="font-bold text-gray-800 uppercase text-[10px]"><?= e($h['new_status']) ?>:</span>
-                        <span><?= e($h['comment']) ?></span>
-                        <span class="text-gray-400 text-[10px] block"><?= e($h['created_at']) ?></span>
+                        <span class="px-2.5 py-0.5 rounded-md bg-white/20 text-[10px] font-black uppercase tracking-wider border border-white/30">
+                            Delivery Confirmation Code
+                        </span>
+                        <h3 class="text-sm font-bold mt-1 text-emerald-100">Share this OTP with your delivery partner:</h3>
                     </div>
-                </li>
-                <?php endforeach; ?>
-            </ul>
+                    <div class="bg-white text-emerald-950 px-5 py-2.5 rounded-2xl shadow-md">
+                        <span class="font-mono text-2xl font-black tracking-widest" x-text="plainOtp || '••••'"></span>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <!-- LIVE GPS DELIVERY MAP (For Home Deliveries) -->
+        <?php if ($order['fulfilment_method'] === 'delivery'): ?>
+        <div class="bg-white rounded-3xl p-4 sm:p-5 border border-gray-100 shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-sm font-extrabold text-gray-900 flex items-center gap-1.5">
+                        <span>🛵</span>
+                        <span>Live Delivery Partner Radar</span>
+                    </h3>
+                    <p class="text-xs text-gray-500" x-text="liveMessage"></p>
+                </div>
+                <div class="text-right">
+                    <span class="text-[11px] font-bold text-brand-700 block" x-text="etaText || 'Calculating ETA...'"></span>
+                </div>
+            </div>
+
+            <!-- Leaflet Map Container -->
+            <div id="customerLiveMap" class="w-full h-56 sm:h-64 rounded-2xl border border-gray-200 bg-gray-50 shadow-inner"></div>
+
+            <div class="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-1">
+                <span>🟢 Store &nbsp; 🛵 Delivery Partner &nbsp; 📍 Your Address</span>
+                <span class="text-emerald-600 font-bold flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                    <span>Live GPS Active</span>
+                </span>
+            </div>
         </div>
         <?php endif; ?>
 
-    </div>
-    <?php elseif ($searched): ?>
-    <!-- Order Not Found -->
-    <div class="bg-white rounded-2xl p-6 border border-red-100 text-center space-y-2">
-        <p class="text-sm font-bold text-red-700">No matching order found</p>
-        <p class="text-xs text-gray-500">Please double check your order number or phone number and try again.</p>
+        <!-- ASSIGNED RIDER INFO CARD (If Assigned) -->
+        <template x-if="rider">
+            <div class="bg-white rounded-3xl p-4 sm:p-5 border border-gray-100 shadow-sm flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-2xl bg-emerald-100 border border-emerald-200 text-emerald-800 flex items-center justify-center text-xl font-bold shadow-xs">
+                        🛵
+                    </div>
+                    <div>
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Delivery Partner</span>
+                        <h4 class="text-sm font-extrabold text-gray-900" x-text="rider.name"></h4>
+                        <p class="text-xs text-gray-500" x-text="rider.vehicle_type || 'Blinkit Express Rider'"></p>
+                    </div>
+                </div>
+
+                <a :href="'tel:' + rider.mobile"
+                   class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                    <span>Call</span>
+                </a>
+            </div>
+        </template>
+
+        <!-- ORDER ITEMS & SUMMARY -->
+        <div class="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm space-y-4">
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Order Items</h3>
+            <div class="divide-y divide-gray-100 text-xs">
+                <?php foreach ($order['items'] as $item): ?>
+                    <div class="py-2.5 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-lg bg-gray-100 text-gray-700 flex items-center justify-center font-bold text-[11px]">
+                                <?= (int)$item['quantity'] ?>x
+                            </span>
+                            <div>
+                                <strong class="text-gray-900 block"><?= e($item['product_name']) ?></strong>
+                                <?php if (!empty($item['cutting_option']) && $item['cutting_option'] !== 'whole'): ?>
+                                    <span class="text-[10px] text-emerald-600">Option: <?= e(ucwords(str_replace('_', ' ', $item['cutting_option']))) ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <span class="font-bold text-gray-800">₹<?= number_format((float)$item['total_price'], 2) ?></span>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+
+            <div class="pt-3 border-t border-gray-100 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-gray-400 font-semibold block">Total Bill</span>
+                    <strong class="text-lg font-black text-brand-700">₹<?= number_format((float)$order['total_amount'], 2) ?></strong>
+                </div>
+                <div>
+                    <span class="px-3 py-1 rounded-xl font-bold text-xs <?= in_array($order['payment_status'], ['paid', 'captured'], true) ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200' ?>">
+                        <?= in_array($order['payment_status'], ['paid', 'captured'], true) ? 'Paid Online' : 'Cash on Delivery (Pending)' ?>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- FULL TIMELINE AUDIT -->
+        <div class="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm space-y-3">
+            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Live Delivery Timeline</h3>
+            <div class="space-y-3 relative border-l-2 border-emerald-200 ml-2 pl-4 text-xs">
+                <?php foreach ($timeline as $t): ?>
+                    <div class="relative">
+                        <span class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                        <div class="flex items-center justify-between">
+                            <strong class="text-gray-900"><?= e($t['title']) ?></strong>
+                            <span class="text-[10px] text-gray-400"><?= date('h:i A', strtotime($t['created_at'])) ?></span>
+                        </div>
+                        <?php if (!empty($t['description'])): ?>
+                            <p class="text-[11px] text-gray-500 mt-0.5"><?= e($t['description']) ?></p>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+
     </div>
     <?php endif; ?>
-
 </div>
+
+<script>
+function customerTracker(initialData) {
+    return {
+        orderId: initialData.orderId,
+        trackingHash: initialData.trackingHash,
+        workflowStatus: initialData.workflowStatus,
+        fulfilmentMethod: initialData.fulfilmentMethod,
+        customerLat: initialData.customerLat,
+        customerLng: initialData.customerLng,
+        riderLat: initialData.riderLat,
+        riderLng: initialData.riderLng,
+        plainOtp: initialData.plainOtp,
+        isOtpVerified: initialData.isOtpVerified,
+        rider: <?= json_encode($rider) ?>,
+        map: null,
+        riderMarker: null,
+        storeMarker: null,
+        destMarker: null,
+        storeLat: 23.8920,
+        storeLng: 75.1320,
+        etaText: '',
+        pollTimer: null,
+
+        get statusBadgeText() {
+            const map = {
+                'unassigned': 'ORDER CONFIRMED',
+                'accepted': 'PARTNER ASSIGNED',
+                'reached_shop': 'AT STORE FOR PICKUP',
+                'picked_up': 'PACKED & PICKED UP',
+                'out_for_delivery': 'OUT FOR DELIVERY',
+                'delivered': 'DELIVERED ✓',
+                'cancelled': 'CANCELLED'
+            };
+            return map[this.workflowStatus] || this.workflowStatus.toUpperCase();
+        },
+
+        get statusBadgeClass() {
+            if (this.workflowStatus === 'delivered') return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+            if (this.workflowStatus === 'out_for_delivery') return 'bg-amber-100 text-amber-800 border-amber-300 animate-pulse';
+            if (this.workflowStatus === 'cancelled') return 'bg-red-100 text-red-800 border-red-300';
+            return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+        },
+
+        get liveMessage() {
+            if (this.workflowStatus === 'delivered') return 'Order successfully delivered to your address.';
+            if (this.workflowStatus === 'out_for_delivery') return 'Delivery partner is on the road heading to you.';
+            if (this.workflowStatus === 'picked_up') return 'Fresh coconuts picked up from store counter.';
+            if (this.workflowStatus === 'reached_shop') return 'Partner has arrived at store to pick up items.';
+            if (this.workflowStatus === 'accepted') return 'Partner assigned and driving to store.';
+            return 'Fresh harvest being prepared at store.';
+        },
+
+        init() {
+            if (this.fulfilmentMethod === 'delivery' && this.orderId) {
+                this.$nextTick(() => {
+                    this.initCustomerMap();
+                    this.startLivePolling();
+                });
+            }
+        },
+
+        initCustomerMap() {
+            const container = document.getElementById('customerLiveMap');
+            if (!container) return;
+
+            this.map = L.map('customerLiveMap', {
+                attributionControl: false,
+                zoomControl: false
+            }).setView([this.storeLat, this.storeLng], 14);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(this.map);
+
+            // Store Pin
+            const storeIcon = L.divIcon({
+                className: 'c-store-pin',
+                html: '<div style="background:#059669; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.4); font-size:14px;">🏬</div>',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+            this.storeMarker = L.marker([this.storeLat, this.storeLng], { icon: storeIcon }).addTo(this.map);
+
+            // Customer Destination Pin
+            const destIcon = L.divIcon({
+                className: 'c-dest-pin',
+                html: '<div style="background:#dc2626; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.4); font-size:14px;">📍</div>',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+            this.destMarker = L.marker([this.customerLat, this.customerLng], { icon: destIcon }).addTo(this.map);
+
+            // Initial rider marker if available
+            if (this.riderLat && this.riderLng) {
+                this.updateRiderMarker(this.riderLat, this.riderLng);
+            }
+
+            this.recenter();
+        },
+
+        updateRiderMarker(lat, lng) {
+            if (!this.map) return;
+            const riderIcon = L.divIcon({
+                className: 'c-rider-pin',
+                html: '<div style="background:#10b981; width:34px; height:34px; border-radius:50%; border:3px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 0 15px #10b981; font-size:18px;">🛵</div>',
+                iconSize: [34, 34],
+                iconAnchor: [17, 17]
+            });
+
+            if (this.riderMarker) {
+                this.riderMarker.setLatLng([lat, lng]);
+            } else {
+                this.riderMarker = L.marker([lat, lng], { icon: riderIcon }).addTo(this.map);
+            }
+
+            // Calculate ETA
+            const R = 6371;
+            const dLat = (this.customerLat - lat) * Math.PI / 180;
+            const dLon = (this.customerLng - lng) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat * Math.PI / 180) * Math.cos(this.customerLat * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distKm = Math.round(R * c * 1.3 * 10) / 10;
+            const minutes = Math.max(2, Math.ceil((distKm / 20) * 60) + 1);
+
+            this.etaText = `Partner arriving in ~${minutes} mins (${distKm} km)`;
+        },
+
+        recenter() {
+            if (!this.map) return;
+            const markers = [this.storeMarker, this.destMarker];
+            if (this.riderMarker) markers.push(this.riderMarker);
+            const group = L.featureGroup(markers);
+            this.map.fitBounds(group.getBounds().pad(0.3));
+        },
+
+        startLivePolling() {
+            if (this.workflowStatus === 'delivered' || this.workflowStatus === 'cancelled') return;
+
+            this.pollTimer = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/customer/order-tracking?h=' + encodeURIComponent(this.trackingHash));
+                    const data = await res.json();
+                    if (data.success) {
+                        this.workflowStatus = data.delivery_workflow_status;
+                        if (data.plain_otp) this.plainOtp = data.plain_otp;
+                        if (data.rider) this.rider = data.rider;
+                        if (data.rider && data.rider.current_lat && data.rider.current_lng) {
+                            this.updateRiderMarker(parseFloat(data.rider.current_lat), parseFloat(data.rider.current_lng));
+                        }
+                        if (this.workflowStatus === 'delivered') {
+                            clearInterval(this.pollTimer);
+                            window.location.reload();
+                        }
+                    }
+                } catch(e) {}
+            }, 7000);
+        }
+    };
+}
+</script>
 
 <?php require_once __DIR__ . '/layouts/footer.php'; ?>

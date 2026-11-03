@@ -108,6 +108,14 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `razorpay_payment_id` VARCHAR(60) NULL,
     `razorpay_signature` VARCHAR(255) NULL,
     `order_status` ENUM('pending', 'confirmed', 'delivered', 'cancelled') NOT NULL DEFAULT 'pending',
+    `delivery_boy_id` INT UNSIGNED NULL DEFAULT NULL,
+    `delivery_workflow_status` ENUM('unassigned', 'accepted', 'reached_shop', 'picked_up', 'out_for_delivery', 'delivered', 'cancelled') NOT NULL DEFAULT 'unassigned',
+    `delivery_assigned_at` DATETIME NULL DEFAULT NULL,
+    `delivery_accepted_at` DATETIME NULL DEFAULT NULL,
+    `delivery_picked_up_at` DATETIME NULL DEFAULT NULL,
+    `delivery_completed_at` DATETIME NULL DEFAULT NULL,
+    `delivery_escalated` TINYINT(1) NOT NULL DEFAULT 0,
+    `delivery_escalated_at` DATETIME NULL DEFAULT NULL,
     `tracking_hash` VARCHAR(64) NOT NULL UNIQUE,
     `estimated_delivery` VARCHAR(100) NULL,
     `notes` TEXT NULL,
@@ -116,6 +124,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX `idx_order_num` (`order_number`),
     INDEX `idx_status` (`order_status`),
+    INDEX `idx_orders_delivery_boy_id` (`delivery_boy_id`),
     INDEX `idx_customer_phone` (`customer_phone`),
     INDEX `idx_created_at` (`created_at`),
     INDEX `idx_tracking_hash` (`tracking_hash`),
@@ -320,56 +329,6 @@ CREATE TABLE IF NOT EXISTS `invoice_sequences` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 18. PWA Web Push Notifications Tables
-CREATE TABLE IF NOT EXISTS `push_subscriptions` (
-    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `customer_id` INT UNSIGNED NULL,
-    `user_type` ENUM('customer', 'guest', 'admin') NOT NULL DEFAULT 'customer',
-    `endpoint` TEXT NOT NULL,
-    `endpoint_hash` VARCHAR(64) NOT NULL UNIQUE,
-    `p256dh` TEXT NOT NULL,
-    `auth` VARCHAR(255) NOT NULL,
-    `user_agent` VARCHAR(255) NULL,
-    `status` ENUM('active', 'expired', 'unsubscribed') NOT NULL DEFAULT 'active',
-    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `last_used_at` DATETIME NULL,
-    INDEX `idx_ps_hash` (`endpoint_hash`),
-    INDEX `idx_ps_customer` (`customer_id`),
-    INDEX `idx_ps_status` (`status`),
-    INDEX `idx_ps_user_type` (`user_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `notification_history` (
-    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `category` ENUM('offers', 'orders', 'stock', 'news') NOT NULL,
-    `title` VARCHAR(255) NOT NULL,
-    `message` TEXT NOT NULL,
-    `image_url` VARCHAR(255) NULL,
-    `click_url` VARCHAR(255) NOT NULL DEFAULT '/',
-    `target_type` ENUM('all_customers', 'single_customer', 'test') NOT NULL DEFAULT 'all_customers',
-    `target_customer_id` INT UNSIGNED NULL,
-    `sent_by_admin_id` INT UNSIGNED NULL,
-    `success_count` INT UNSIGNED NOT NULL DEFAULT 0,
-    `failure_count` INT UNSIGNED NOT NULL DEFAULT 0,
-    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_nh_category` (`category`),
-    INDEX `idx_nh_created` (`created_at`),
-    INDEX `idx_nh_customer` (`target_customer_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `notification_deliveries` (
-    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `notification_id` BIGINT UNSIGNED NOT NULL,
-    `subscription_id` BIGINT UNSIGNED NOT NULL,
-    `http_code` INT NULL,
-    `status` ENUM('sent', 'failed', 'expired') NOT NULL DEFAULT 'sent',
-    `error_message` VARCHAR(255) NULL,
-    `sent_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_nd_notif` (`notification_id`),
-    INDEX `idx_nd_sub` (`subscription_id`),
-    INDEX `idx_nd_status` (`status`),
-    CONSTRAINT `fk_nd_history` FOREIGN KEY (`notification_id`) REFERENCES `notification_history` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 19. Product Categories Table
 CREATE TABLE IF NOT EXISTS `categories` (
@@ -413,6 +372,130 @@ CREATE TABLE IF NOT EXISTS `combo_items` (
     INDEX `idx_product_id` (`product_id`),
     CONSTRAINT `fk_ci_combo` FOREIGN KEY (`combo_id`) REFERENCES `combos` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ====================================================================
+-- 22. Blinkit-Style Delivery Boy System Tables
+-- ====================================================================
+
+-- 22.1 Delivery Boys Accounts Table
+CREATE TABLE IF NOT EXISTS `delivery_boys` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `name` VARCHAR(100) NOT NULL,
+    `mobile` VARCHAR(20) NOT NULL UNIQUE,
+    `login_id` VARCHAR(50) NOT NULL UNIQUE,
+    `password_hash` VARCHAR(255) NOT NULL,
+    `status` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+    `is_online` TINYINT(1) NOT NULL DEFAULT 0,
+    `current_lat` DECIMAL(10, 8) NULL,
+    `current_lng` DECIMAL(11, 8) NULL,
+    `last_location_updated_at` DATETIME NULL,
+    `vehicle_type` VARCHAR(50) NOT NULL DEFAULT 'Bike / Scooter',
+    `vehicle_number` VARCHAR(50) NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_rider_status_online` (`status`, `is_online`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22.2 Order Assignments & Atomic Acceptance Table
+CREATE TABLE IF NOT EXISTS `order_assignments` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `order_id` INT UNSIGNED NOT NULL,
+    `delivery_boy_id` INT UNSIGNED NOT NULL,
+    `status` ENUM('offered', 'accepted', 'rejected', 'escalated', 'cancelled') NOT NULL DEFAULT 'offered',
+    `rejection_reason` VARCHAR(255) NULL,
+    `assigned_by` ENUM('auto', 'admin') NOT NULL DEFAULT 'auto',
+    `offered_at` DATETIME NOT NULL,
+    `responded_at` DATETIME NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_assign_order_status` (`order_id`, `status`),
+    INDEX `idx_assign_rider_status` (`delivery_boy_id`, `status`),
+    CONSTRAINT `fk_assign_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_assign_rider` FOREIGN KEY (`delivery_boy_id`) REFERENCES `delivery_boys` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22.3 Delivery Detailed Timeline & Status Audit Table
+CREATE TABLE IF NOT EXISTS `delivery_timeline` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `order_id` INT UNSIGNED NOT NULL,
+    `delivery_boy_id` INT UNSIGNED NULL,
+    `event` VARCHAR(50) NOT NULL,
+    `title` VARCHAR(150) NOT NULL,
+    `description` TEXT NULL,
+    `lat` DECIMAL(10, 8) NULL,
+    `lng` DECIMAL(11, 8) NULL,
+    `actor_type` ENUM('system', 'delivery_boy', 'admin', 'customer') NOT NULL DEFAULT 'delivery_boy',
+    `actor_id` INT UNSIGNED NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_timeline_order` (`order_id`),
+    CONSTRAINT `fk_timeline_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_timeline_rider` FOREIGN KEY (`delivery_boy_id`) REFERENCES `delivery_boys` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22.4 Delivery Boy Live GPS Location History Table
+CREATE TABLE IF NOT EXISTS `delivery_boy_locations` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `delivery_boy_id` INT UNSIGNED NOT NULL,
+    `order_id` INT UNSIGNED NULL,
+    `lat` DECIMAL(10, 8) NOT NULL,
+    `lng` DECIMAL(11, 8) NOT NULL,
+    `heading` DECIMAL(6, 2) NULL,
+    `speed` DECIMAL(6, 2) NULL,
+    `accuracy` DECIMAL(8, 2) NULL,
+    `recorded_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_loc_rider_order_time` (`delivery_boy_id`, `order_id`, `recorded_at`),
+    CONSTRAINT `fk_loc_rider` FOREIGN KEY (`delivery_boy_id`) REFERENCES `delivery_boys` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_loc_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22.5 Cash On Delivery (COD) Collections & Admin Reconciliation Table
+CREATE TABLE IF NOT EXISTS `delivery_cod_collections` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `order_id` INT UNSIGNED NOT NULL UNIQUE,
+    `delivery_boy_id` INT UNSIGNED NOT NULL,
+    `amount` DECIMAL(10, 2) NOT NULL,
+    `status` ENUM('collected_by_rider', 'reconciled_with_admin') NOT NULL DEFAULT 'collected_by_rider',
+    `collected_at` DATETIME NOT NULL,
+    `reconciled_at` DATETIME NULL,
+    `reconciled_by_admin_id` INT UNSIGNED NULL,
+    `notes` TEXT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_cod_rider_status` (`delivery_boy_id`, `status`),
+    CONSTRAINT `fk_cod_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_cod_rider` FOREIGN KEY (`delivery_boy_id`) REFERENCES `delivery_boys` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22.6 Customer Delivery OTP Verifications Table
+CREATE TABLE IF NOT EXISTS `delivery_otp_verifications` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `order_id` INT UNSIGNED NOT NULL UNIQUE,
+    `otp_code_hash` VARCHAR(255) NOT NULL,
+    `plain_otp_for_dev` VARCHAR(10) NULL,
+    `attempts` INT NOT NULL DEFAULT 0,
+    `max_attempts` INT NOT NULL DEFAULT 3,
+    `expires_at` DATETIME NOT NULL,
+    `verified_at` DATETIME NULL,
+    `is_admin_override` TINYINT(1) NOT NULL DEFAULT 0,
+    `override_reason` TEXT NULL,
+    `override_admin_id` INT UNSIGNED NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT `fk_otp_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22.7 Razorpay Dynamic UPI QR Records Table
+CREATE TABLE IF NOT EXISTS `delivery_dynamic_qrs` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `order_id` INT UNSIGNED NOT NULL,
+    `razorpay_qr_id` VARCHAR(100) NULL,
+    `qr_image_url` TEXT NULL,
+    `amount` DECIMAL(10, 2) NOT NULL,
+    `status` ENUM('active', 'paid', 'expired', 'failed') NOT NULL DEFAULT 'active',
+    `razorpay_payment_id` VARCHAR(100) NULL,
+    `api_response_raw` TEXT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_qr_order_status` (`order_id`, `status`),
+    CONSTRAINT `fk_dynamic_qr_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 
 

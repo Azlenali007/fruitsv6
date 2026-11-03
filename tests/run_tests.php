@@ -182,13 +182,6 @@ require_once __DIR__ . '/test_invoices.php';
 $passCount += $invPass;
 $failCount += $invFail;
 
-// ---------------------------------------------------------
-// 12. PWA & WEB PUSH NOTIFICATIONS TEST SUITE
-// ---------------------------------------------------------
-echo "\n";
-require_once __DIR__ . '/test_pwa_web_push.php';
-$passCount += $pwaPass;
-$failCount += $pwaFail;
 
 // ---------------------------------------------------------
 // 13. RAZORPAY PAYMENT FIX & MULTI-PRODUCT E-COMMERCE SUITE

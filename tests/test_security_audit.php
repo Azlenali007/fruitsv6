@@ -127,8 +127,7 @@ $expectedTables = [
     'orders', 'order_items', 'settings', 'customers',
     'customer_login_attempts', 'coupons', 'coupon_usage',
     'payment_transactions', 'payment_webhook_events',
-    'delivery_areas', 'invoices', 'invoice_sequences',
-    'push_subscriptions', 'notification_history', 'notification_deliveries'
+    'delivery_areas', 'invoices', 'invoice_sequences'
 ];
 
 $allTablesExist = true;
@@ -139,7 +138,7 @@ foreach ($expectedTables as $tbl) {
         $missingTbls[] = $tbl;
     }
 }
-it_sec("22. All core and PWA push tables exist in MySQL", $allTablesExist, implode(', ', $missingTbls));
+it_sec("22. All core database tables exist in MySQL", $allTablesExist, implode(', ', $missingTbls));
 
 // Check products multi-product columns
 $pCols = $pdo->query("SHOW COLUMNS FROM `products`")->fetchAll(PDO::FETCH_COLUMN);

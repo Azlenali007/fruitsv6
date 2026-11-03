@@ -531,10 +531,6 @@ try {
                 $updatedOrder = Order::getById((int)$order['id']);
                 Invoice::createForOrder($updatedOrder, $razorpayPaymentId);
 
-                // Instant PWA Web Push notification to admins and customer
-                NotificationService::sendNewOrderToAdmins((int)$order['id']);
-                NotificationService::sendOrderStatusToCustomer((int)$order['id'], 'payment_confirmed');
-
                 CartService::clear();
 
                 json_response([
@@ -588,8 +584,6 @@ try {
                             ]);
                             $updatedOrder = Order::getById((int)$order['id']);
                             Invoice::createForOrder($updatedOrder, $gatewayPaymentId);
-                            NotificationService::sendNewOrderToAdmins((int)$order['id']);
-                            NotificationService::sendOrderStatusToCustomer((int)$order['id'], 'payment_confirmed');
 
                             $tx = PaymentTransaction::getByGatewayOrderId($gatewayOrderId);
                             if ($tx) {
@@ -912,17 +906,6 @@ try {
 
                 $success = Order::updateStatus($orderId, $newStatus, $comment, $changedBy);
                 if ($success) {
-                    $statusEventMap = [
-                        'confirmed' => 'order_confirmed',
-                        'preparing' => 'being_prepared',
-                        'ready' => 'order_ready',
-                        'out_for_delivery' => 'out_for_delivery',
-                        'delivered' => 'order_delivered',
-                        'cancelled' => 'order_cancelled'
-                    ];
-                    if (isset($statusEventMap[$newStatus])) {
-                        NotificationService::sendOrderStatusToCustomer($orderId, $statusEventMap[$newStatus]);
-                    }
                     set_flash('success', "Order #$orderId updated to " . ucfirst(str_replace('_', ' ', $newStatus)) . ".");
                 } else {
                     set_flash('error', 'Failed to update order status.');
@@ -1433,221 +1416,12 @@ try {
                     'whatsapp_popup_frequency' => in_array($_POST['whatsapp_popup_frequency'] ?? '', ['session', 'daily', 'weekly', 'always']) ? $_POST['whatsapp_popup_frequency'] : 'session',
                 ];
 
-                $settingsData['pwa_push_enabled'] = isset($_POST['pwa_push_enabled']) ? '1' : '0';
-                $settingsData['pwa_admin_order_alerts'] = isset($_POST['pwa_admin_order_alerts']) ? '1' : '0';
-                $settingsData['pwa_customer_order_alerts'] = isset($_POST['pwa_customer_order_alerts']) ? '1' : '0';
-
                 Setting::setMany($settingsData);
-                set_flash('success', 'Store delivery, business, and PWA notification settings successfully saved.');
+                set_flash('success', 'Store delivery and business settings successfully saved.');
                 header('Location: /admin/settings');
                 exit;
             }
             header('Location: /admin/settings');
-            break;
-
-        // ------------------------------------------------
-        // PWA Web Push Notification Routes
-        // ------------------------------------------------
-        case '/admin/notifications':
-            AuthService::requireAdmin();
-            require __DIR__ . '/../app/views/admin/notifications.php';
-            break;
-
-        case '/admin/notifications/send':
-            AuthService::requireAdmin();
-            if ($method === 'POST') {
-                $raw = file_get_contents('php://input');
-                $input = json_decode($raw, true) ?? $_POST;
-                $token = $input['_csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
-                if (!verify_csrf_token($token)) {
-                    json_response(['success' => false, 'error' => 'Security token invalid or expired.'], 403);
-                }
-
-                $category = trim($input['category'] ?? ($input['type'] ?? 'offers'));
-                if (!in_array($category, ['offers', 'orders', 'stock', 'news'], true)) {
-                    $category = 'offers';
-                }
-
-                $title = trim($input['title'] ?? '');
-                $message = trim($input['message'] ?? ($input['body'] ?? ''));
-                $image = !empty($input['image_url']) ? trim($input['image_url']) : (!empty($input['image']) ? trim($input['image']) : null);
-                $url = !empty($input['click_url']) ? trim($input['click_url']) : (!empty($input['url']) ? trim($input['url']) : '/');
-                $targetCust = !empty($input['customer_id']) ? (int)$input['customer_id'] : null;
-
-                $admin = AuthService::user();
-                $adminId = (int)($admin['id'] ?? 0);
-
-                $res = NotificationService::sendBroadcast($category, $title, $message, $image, $url, $adminId, $targetCust);
-                json_response($res);
-            }
-            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
-            break;
-
-        case '/admin/notifications/test-admin':
-            AuthService::requireAdmin();
-            if ($method === 'POST') {
-                $pdo = Database::getConnection();
-                $stmt = $pdo->query("SELECT * FROM `push_subscriptions` WHERE `user_type` = 'admin'");
-                $adminSubs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                $stmt->closeCursor();
-
-                if (empty($adminSubs)) {
-                    json_response(['success' => false, 'error' => 'No admin devices currently enrolled. Click "Enrol Current Admin Device" first.'], 400);
-                }
-
-                $sent = 0;
-                $failed = 0;
-                $testPayload = [
-                    'title' => 'Admin Push Test Alert 🥥',
-                    'body' => 'Web Push notification is active and communicating with your device!',
-                    'icon' => '/assets/images/icons/icon-192.png',
-                    'badge' => '/assets/images/icons/badge-72.png',
-                    'tag' => 'admin-test-' . time(),
-                    'data' => ['url' => '/admin/notifications']
-                ];
-
-                foreach ($adminSubs as $sub) {
-                    $res = WebPushService::sendNotification($sub, $testPayload);
-                    if ($res['success']) {
-                        $sent++;
-                    } else {
-                        $failed++;
-                        if (!empty($res['expired'])) {
-                            NotificationService::expireSubscriptionById((int)$sub['id']);
-                        }
-                    }
-                }
-
-                json_response([
-                    'success' => true,
-                    'total' => count($adminSubs),
-                    'sent' => $sent,
-                    'failed' => $failed
-                ]);
-            }
-            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
-            break;
-
-        case '/api/push/vapid-public-key':
-            try {
-                $pubKey = WebPushService::getPublicKey();
-                json_response(['success' => true, 'publicKey' => $pubKey]);
-            } catch (Throwable $e) {
-                json_response(['success' => false, 'error' => $e->getMessage()], 500);
-            }
-            break;
-
-        case '/api/push/subscribe':
-            if ($method === 'POST') {
-                $raw = file_get_contents('php://input');
-                $input = json_decode($raw, true) ?? $_POST;
-
-                // Enforce CSRF protection
-                $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input['_csrf_token'] ?? ''));
-                if (!verify_csrf_token($csrfToken)) {
-                    json_response(['success' => false, 'error' => 'Security token expired. Please refresh the page and try again.'], 403);
-                }
-
-                $endpoint = trim($input['endpoint'] ?? '');
-                $p256dh = trim($input['p256dh'] ?? '');
-                $auth = trim($input['auth'] ?? '');
-                $userType = trim($input['user_type'] ?? 'customer');
-
-                $userId = null;
-                if ($userType === 'admin') {
-                    if (!AuthService::check()) {
-                        json_response(['success' => false, 'error' => 'Admin authentication required to enroll this device as Admin.'], 401);
-                    }
-                    $userId = (int)AuthService::adminId();
-                } elseif (CustomerAuthService::check()) {
-                    $userId = (int)CustomerAuthService::customerId();
-                    $userType = 'customer';
-                } else {
-                    $userType = 'guest';
-                    $_SESSION['guest_push_endpoint_hash'] = hash('sha256', $endpoint);
-                }
-
-                $res = NotificationService::subscribe($endpoint, $p256dh, $auth, $userType, $userId);
-                json_response($res);
-            }
-            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
-            break;
-
-        case '/api/push/device-status':
-            $raw = file_get_contents('php://input');
-            $input = json_decode($raw, true) ?? $_POST;
-            $endpoint = trim($input['endpoint'] ?? ($_GET['endpoint'] ?? ''));
-
-            if (empty($endpoint)) {
-                json_response(['success' => false, 'error' => 'Endpoint parameter required'], 400);
-            }
-
-            $status = NotificationService::getDeviceStatus($endpoint);
-            $status['success'] = true;
-            $status['is_admin_logged_in'] = AuthService::check();
-            $status['is_customer_logged_in'] = CustomerAuthService::check();
-            json_response($status);
-            break;
-
-        case '/api/push/test-device':
-            if ($method === 'POST') {
-                $raw = file_get_contents('php://input');
-                $input = json_decode($raw, true) ?? $_POST;
-
-                $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input['_csrf_token'] ?? ''));
-                if (!verify_csrf_token($csrfToken)) {
-                    json_response(['success' => false, 'error' => 'Security token expired.'], 403);
-                }
-
-                $endpoint = trim($input['endpoint'] ?? '');
-                $role = trim($input['role'] ?? 'admin');
-
-                if ($role === 'admin' && !AuthService::check()) {
-                    json_response(['success' => false, 'error' => 'Admin authorization required.'], 401);
-                }
-
-                $res = NotificationService::sendTestToDevice($endpoint, $role);
-                json_response($res);
-            }
-            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
-            break;
-
-        case '/api/push/unsubscribe':
-            if ($method === 'POST') {
-                $raw = file_get_contents('php://input');
-                $input = json_decode($raw, true) ?? $_POST;
-
-                $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input['_csrf_token'] ?? ''));
-                if (!verify_csrf_token($csrfToken)) {
-                    json_response(['success' => false, 'error' => 'Security token expired.'], 403);
-                }
-
-                $endpoint = trim($input['endpoint'] ?? '');
-                $success = NotificationService::unsubscribe($endpoint);
-                json_response(['success' => $success]);
-            }
-            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
-            break;
-
-        case '/account/notifications/preferences':
-            CustomerAuthService::requireLogin('/account');
-            if ($method === 'POST') {
-                $token = $_POST[CSRF_TOKEN_KEY] ?? '';
-                if (!verify_csrf_token($token)) {
-                    set_flash('error', 'Security token expired.');
-                    header('Location: /account');
-                    exit;
-                }
-                $customerId = (int)CustomerAuthService::customerId();
-                $orderUpdates = isset($_POST['order_updates']);
-                $promotions = isset($_POST['promotions']);
-
-                NotificationService::setCustomerPreferences($customerId, $orderUpdates, $promotions);
-                set_flash('success', 'Notification preferences saved successfully.');
-                header('Location: /account');
-                exit;
-            }
-            header('Location: /account');
             break;
 
         case '/admin/reports':

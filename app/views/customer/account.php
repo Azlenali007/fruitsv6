@@ -16,11 +16,7 @@ foreach ($orders as $o) {
     if ($o['order_status'] !== 'cancelled') {
         $totalSpent += (float)$o['total_amount'];
     }
-}
-$notifPrefs = NotificationService::getCustomerPreferences($customerId);
-$orderUpdatesEnabled = !empty($notifPrefs['order_updates']);
-$promotionsEnabled = !empty($notifPrefs['promotions']);
-?>
+
 
 <div class="max-w-4xl mx-auto px-4 py-8 sm:py-10 space-y-8">
     <!-- Top Welcome Card -->
@@ -156,34 +152,6 @@ $promotionsEnabled = !empty($notifPrefs['promotions']);
                     </button>
                 </div>
             </form>
-
-            <!-- Push Notifications & Order Alerts -->
-            <div class="border-t border-gray-100 pt-5 space-y-3">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <div class="w-7 h-7 rounded-lg bg-emerald-50 text-brand-600 flex items-center justify-center">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-                        </div>
-                        <h3 class="text-xs font-bold text-gray-900 uppercase tracking-wider">Push Notifications</h3>
-                    </div>
-                    <span class="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">PWA Live</span>
-                </div>
-
-                <p class="text-xs text-gray-500 leading-relaxed">
-                    Get instant delivery updates when your coconut order is confirmed, packed, and out for delivery. Manage your device subscriptions in the Notification Center.
-                </p>
-
-                <div class="pt-1">
-                    <button 
-                        type="button" 
-                        onclick="window.NA_PWA && window.NA_PWA.openNotificationCenter('customer')" 
-                        class="w-full bg-emerald-50 hover:bg-emerald-100 text-[#235d3a] border border-emerald-200 font-bold py-2.5 px-4 rounded-xl transition text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                        <span>Open Notification Center</span>
-                    </button>
-                </div>
-            </div>
         </div>
 
         <!-- Right: Recent Orders List -->
