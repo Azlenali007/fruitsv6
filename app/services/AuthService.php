@@ -56,6 +56,14 @@ class AuthService {
         return !empty($_SESSION[self::SESSION_ADMIN_ID]);
     }
 
+    public static function id(): ?int {
+        return !empty($_SESSION[self::SESSION_ADMIN_ID]) ? (int)$_SESSION[self::SESSION_ADMIN_ID] : null;
+    }
+
+    public static function adminId(): ?int {
+        return self::id();
+    }
+
     public static function user(): ?array {
         if (!self::check()) {
             return null;

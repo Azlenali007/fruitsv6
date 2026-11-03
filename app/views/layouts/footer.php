@@ -255,5 +255,196 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
     </div>
 </div>
 
+<?php 
+    $showPushPromptAfterAuth = !empty($_SESSION['show_push_prompt_after_auth']);
+    unset($_SESSION['show_push_prompt_after_auth']);
+?>
+
+<!-- Post-Login / Post-Registration Custom Notification Prompt Modal -->
+<div id="pwa-auth-notif-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4" data-post-auth="<?= $showPushPromptAfterAuth ? 'true' : 'false' ?>">
+    <div class="w-full max-w-sm rounded-3xl bg-white p-6 sm:p-7 shadow-2xl border border-gray-100 text-center relative overflow-hidden">
+        <!-- Brand Bell Icon -->
+        <div class="w-14 h-14 mx-auto rounded-2xl bg-emerald-50 text-[#235d3a] flex items-center justify-center mb-4 shadow-xs">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+        </div>
+        
+        <h3 class="text-xl font-black text-gray-900 tracking-tight">Stay Updated!</h3>
+        <p class="text-xs text-gray-600 mt-2 leading-relaxed">
+            Allow notifications to receive order updates, payment confirmations and important offers from N.A Fresh Fruits & Coconuts.
+        </p>
+
+        <!-- Feedback & Error Notification Area -->
+        <div id="pwa-auth-prompt-feedback" class="hidden my-3 p-2.5 rounded-xl text-xs"></div>
+
+        <!-- Action buttons -->
+        <div class="mt-5 space-y-2">
+            <button 
+                type="button" 
+                id="pwa-auth-allow-btn"
+                onclick="window.NA_PWA.handleAuthPromptAllow()"
+                class="w-full bg-[#235d3a] hover:bg-[#1b4a2e] text-white font-bold py-3 px-4 rounded-xl text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+            >
+                <span id="pwa-auth-allow-text">Allow Notifications</span>
+                <svg id="pwa-auth-allow-spinner" class="hidden animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+            </button>
+
+            <button 
+                type="button" 
+                onclick="window.NA_PWA.handleAuthPromptDismiss()"
+                class="w-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 px-4 rounded-xl text-xs transition cursor-pointer"
+            >
+                Not Now
+            </button>
+        </div>
+
+        <!-- Browser Blocked Instructions -->
+        <div id="pwa-auth-blocked-help" class="hidden mt-3 text-[11px] text-gray-500 text-left bg-gray-50 p-3 rounded-xl border border-gray-100">
+            <strong class="text-gray-800 block mb-1">Notifications Blocked in Browser:</strong>
+            <span>Click the padlock or tune icon in your browser address bar and change Notifications from "Block" to "Allow", then refresh.</span>
+        </div>
+    </div>
+</div>
+
+<!-- Centralized Notification Center Modal (Openable from Account or Help) -->
+<div id="pwa-center-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+    <div class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-gray-100 text-left relative max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-emerald-50 text-[#235d3a] flex items-center justify-center">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-gray-900">Notification Settings</h3>
+                    <p class="text-[11px] text-gray-400">Order tracking & store notifications</p>
+                </div>
+            </div>
+            <button type="button" onclick="window.NA_PWA.closeNotificationCenter()" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+
+        <div class="mt-4 space-y-4">
+            <!-- Current Device Status Box -->
+            <div class="p-3.5 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-between">
+                <div>
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block">Device Status</span>
+                    <div id="pwa-center-status-badge" class="mt-0.5 text-xs font-bold text-gray-800">Checking...</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <button 
+                        type="button" 
+                        id="pwa-center-toggle-btn"
+                        onclick="window.NA_PWA.subscribeDevice('customer').then(r => { if(r.success) alert('Notifications successfully enabled on this device!'); })"
+                        class="bg-[#235d3a] hover:bg-[#1b4a2e] text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
+                    >
+                        Enable Notifications
+                    </button>
+                    <button 
+                        type="button" 
+                        id="pwa-center-test-btn"
+                        onclick="window.NA_PWA.testCurrentDevice('customer')"
+                        class="hidden bg-emerald-50 hover:bg-emerald-100 text-[#235d3a] border border-emerald-200 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer"
+                    >
+                        ⚡ Test Notification
+                    </button>
+                </div>
+            </div>
+
+            <!-- Permission Denied Step-by-Step Recovery Guide -->
+            <div id="pwa-center-blocked-help" class="hidden p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-2">
+                <strong class="font-bold flex items-center gap-1.5 text-amber-950">
+                    <svg class="w-4 h-4 text-amber-700 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    <span>How to Unblock in Your Browser:</span>
+                </strong>
+                <ol class="list-decimal list-inside space-y-1 text-[11px] text-amber-800 pl-1 leading-relaxed">
+                    <li>Tap the <strong>Padlock / Tune (Settings)</strong> icon next to the URL in your browser address bar.</li>
+                    <li>Tap <strong>Permissions</strong> or <strong>Site Settings</strong>.</li>
+                    <li>Locate <strong>Notifications</strong> and change it from <em>Blocked</em> to <strong>Allow</strong>.</li>
+                    <li>Return to this page and tap <strong>Check Permission Again</strong> below.</li>
+                </ol>
+                <button 
+                    type="button" 
+                    onclick="window.NA_PWA.init()"
+                    class="w-full mt-2 bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer"
+                >
+                    Check Permission Again
+                </button>
+            </div>
+
+            <!-- Notification Topics Form -->
+            <?php if (CustomerAuthService::check()): ?>
+                <?php 
+                    $cid = CustomerAuthService::customerId();
+                    $notifPrefs = NotificationService::getCustomerPreferences($cid);
+                    $ordUpdates = !empty($notifPrefs['order_updates']);
+                    $promoUpdates = !empty($notifPrefs['promotions']);
+                ?>
+                <form action="/account/notifications/preferences" method="POST" class="pt-3 border-t border-gray-100 space-y-3">
+                    <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
+                    <h4 class="text-xs font-bold text-gray-800 uppercase tracking-wider">Alert Preferences</h4>
+                    
+                    <label class="flex items-start gap-2.5 cursor-pointer">
+                        <input type="checkbox" name="order_updates" value="1" <?= $ordUpdates ? 'checked' : '' ?> class="mt-0.5 rounded text-brand-600 focus:ring-brand-500 h-4 w-4 border-gray-300">
+                        <div class="text-xs">
+                            <span class="font-bold text-gray-800 block">Order Status Updates</span>
+                            <span class="text-[11px] text-gray-500">Order confirmed, preparation, out for delivery, and delivered.</span>
+                        </div>
+                    </label>
+
+                    <label class="flex items-start gap-2.5 cursor-pointer">
+                        <input type="checkbox" name="promotions" value="1" <?= $promoUpdates ? 'checked' : '' ?> class="mt-0.5 rounded text-brand-600 focus:ring-brand-500 h-4 w-4 border-gray-300">
+                        <div class="text-xs">
+                            <span class="font-bold text-gray-800 block">Fresh Harvest & Special Offers</span>
+                            <span class="text-[11px] text-gray-500">Early access to fresh tender coconut batches and combo savings.</span>
+                        </div>
+                    </label>
+
+                    <button type="submit" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 px-3 rounded-xl transition text-xs cursor-pointer">
+                        Save Preferences
+                    </button>
+                </form>
+            <?php endif; ?>
+
+            <div class="pt-2 text-center">
+                <button type="button" onclick="window.NA_PWA.unsubscribeDevice()" class="text-gray-400 hover:text-red-600 text-xs transition">
+                    Disable notifications on this device
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Dedicated Browser Permission Blocked Recovery Modal -->
+<div id="pwa-permission-blocked-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+    <div class="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-gray-100 text-left relative">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+            <div>
+                <h3 class="text-sm font-bold text-gray-900">Notifications Are Blocked</h3>
+                <p class="text-[11px] text-gray-500">Unblock in your browser to receive alerts</p>
+            </div>
+        </div>
+        <div class="space-y-2 text-xs text-gray-600 bg-gray-50 p-3.5 rounded-2xl border border-gray-100 leading-relaxed">
+            <p class="font-bold text-gray-800">Follow these steps:</p>
+            <ol class="list-decimal list-inside space-y-1 text-[11px] text-gray-600">
+                <li>Tap the <strong>Padlock / Tune (Settings)</strong> icon next to the URL in your browser address bar.</li>
+                <li>Tap <strong>Permissions</strong> or <strong>Site Settings</strong>.</li>
+                <li>Find <strong>Notifications</strong> and switch it from <em>Blocked</em> to <strong>Allow</strong>.</li>
+                <li>Reload this page and tap <strong>Allow Notifications</strong>.</li>
+            </ol>
+        </div>
+        <div class="mt-4 flex gap-2">
+            <button type="button" onclick="location.reload()" class="flex-1 bg-[#235d3a] hover:bg-[#1b4a2e] text-white font-bold py-2.5 px-3 rounded-xl text-xs transition cursor-pointer">
+                Reload Page
+            </button>
+            <button type="button" onclick="window.NA_PWA.hideBlockedPermissionModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 px-3 rounded-xl text-xs transition cursor-pointer">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+
 </body>
 </html>

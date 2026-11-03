@@ -13,7 +13,7 @@ class CustomerAuthService {
     /**
      * Authenticate customer with mobile number or email and password
      */
-    public static function login(string $identifier, string $password, string $ip): array {
+    public static function login(string $identifier, string $password, string $ip = '127.0.0.1'): array {
         $identifier = trim($identifier);
 
         if (empty($identifier) || empty($password)) {
@@ -77,6 +77,7 @@ class CustomerAuthService {
         $_SESSION[self::SESSION_CUSTOMER_NAME] = $customer['name'];
         $_SESSION[self::SESSION_CUSTOMER_PHONE] = $customer['phone'];
         $_SESSION[self::SESSION_CUSTOMER_EMAIL] = $customer['email'];
+        $_SESSION['show_push_prompt_after_auth'] = true;
 
         Customer::recordLoginAttempt($identifier, $ip, true);
         Customer::clearLoginAttempts($identifier, $ip);
@@ -91,7 +92,7 @@ class CustomerAuthService {
     /**
      * Register a new customer or activate an existing guest record
      */
-    public static function register(array $data, string $ip): array {
+    public static function register(array $data, string $ip = '127.0.0.1'): array {
         $name = trim($data['name'] ?? '');
         $phone = trim($data['phone'] ?? '');
         $email = trim($data['email'] ?? '');
@@ -173,6 +174,7 @@ class CustomerAuthService {
         $_SESSION[self::SESSION_CUSTOMER_NAME] = $name;
         $_SESSION[self::SESSION_CUSTOMER_PHONE] = '+91 ' . $cleanPhone;
         $_SESSION[self::SESSION_CUSTOMER_EMAIL] = $email;
+        $_SESSION['show_push_prompt_after_auth'] = true;
 
         Customer::updateLastLogin($customerId);
 
@@ -207,6 +209,13 @@ class CustomerAuthService {
      */
     public static function id(): ?int {
         return isset($_SESSION[self::SESSION_CUSTOMER_ID]) ? (int)$_SESSION[self::SESSION_CUSTOMER_ID] : null;
+    }
+
+    /**
+     * Alias for id()
+     */
+    public static function customerId(): ?int {
+        return self::id();
     }
 
     /**

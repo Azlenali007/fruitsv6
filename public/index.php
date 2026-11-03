@@ -472,7 +472,7 @@ try {
                 }
 
                 // 3. Gateway Payment Status & Amount / Currency Verification
-                $fetchResult = RazorpayService::fetchPayment($razorpayPaymentId);
+                $fetchResult = RazorpayService::fetchPayment($razorpayPaymentId, $razorpayOrderId ?: $attemptRef);
                 if (!$fetchResult['success']) {
                     PaymentTransaction::updateStatus((int)$tx['id'], 'failed', [
                         'gateway_payment_id' => $razorpayPaymentId,
@@ -1544,6 +1544,13 @@ try {
             if ($method === 'POST') {
                 $raw = file_get_contents('php://input');
                 $input = json_decode($raw, true) ?? $_POST;
+
+                // Enforce CSRF protection
+                $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input['_csrf_token'] ?? ''));
+                if (!verify_csrf_token($csrfToken)) {
+                    json_response(['success' => false, 'error' => 'Security token expired. Please refresh the page and try again.'], 403);
+                }
+
                 $endpoint = trim($input['endpoint'] ?? '');
                 $p256dh = trim($input['p256dh'] ?? '');
                 $auth = trim($input['auth'] ?? '');
@@ -1552,7 +1559,7 @@ try {
                 $userId = null;
                 if ($userType === 'admin') {
                     if (!AuthService::check()) {
-                        json_response(['success' => false, 'error' => 'Admin login required to subscribe as admin.'], 401);
+                        json_response(['success' => false, 'error' => 'Admin authentication required to enroll this device as Admin.'], 401);
                     }
                     $userId = (int)AuthService::adminId();
                 } elseif (CustomerAuthService::check()) {
@@ -1560,7 +1567,6 @@ try {
                     $userType = 'customer';
                 } else {
                     $userType = 'guest';
-                    // Store in session for order matching
                     $_SESSION['guest_push_endpoint_hash'] = hash('sha256', $endpoint);
                 }
 
@@ -1570,10 +1576,55 @@ try {
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
             break;
 
+        case '/api/push/device-status':
+            $raw = file_get_contents('php://input');
+            $input = json_decode($raw, true) ?? $_POST;
+            $endpoint = trim($input['endpoint'] ?? ($_GET['endpoint'] ?? ''));
+
+            if (empty($endpoint)) {
+                json_response(['success' => false, 'error' => 'Endpoint parameter required'], 400);
+            }
+
+            $status = NotificationService::getDeviceStatus($endpoint);
+            $status['success'] = true;
+            $status['is_admin_logged_in'] = AuthService::check();
+            $status['is_customer_logged_in'] = CustomerAuthService::check();
+            json_response($status);
+            break;
+
+        case '/api/push/test-device':
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+
+                $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input['_csrf_token'] ?? ''));
+                if (!verify_csrf_token($csrfToken)) {
+                    json_response(['success' => false, 'error' => 'Security token expired.'], 403);
+                }
+
+                $endpoint = trim($input['endpoint'] ?? '');
+                $role = trim($input['role'] ?? 'admin');
+
+                if ($role === 'admin' && !AuthService::check()) {
+                    json_response(['success' => false, 'error' => 'Admin authorization required.'], 401);
+                }
+
+                $res = NotificationService::sendTestToDevice($endpoint, $role);
+                json_response($res);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
         case '/api/push/unsubscribe':
             if ($method === 'POST') {
                 $raw = file_get_contents('php://input');
                 $input = json_decode($raw, true) ?? $_POST;
+
+                $csrfToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input['_csrf_token'] ?? ''));
+                if (!verify_csrf_token($csrfToken)) {
+                    json_response(['success' => false, 'error' => 'Security token expired.'], 403);
+                }
+
                 $endpoint = trim($input['endpoint'] ?? '');
                 $success = NotificationService::unsubscribe($endpoint);
                 json_response(['success' => $success]);

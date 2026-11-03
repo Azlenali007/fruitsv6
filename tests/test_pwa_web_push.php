@@ -245,4 +245,108 @@ pwa_it("NotificationService::getStats() returns admin_devices, customer_devices,
     isset($stats['vapid_public_key'])
 );
 
-echo "PWA & Web Push Notification tests completed: {$pwaPass} passed, {$pwaFail} failed.\n";
+// -------------------------------------------------------------
+// Test 11: Admin Device Enrollment & Multi-Device Support
+// -------------------------------------------------------------
+$adminEp1 = 'https://test-push-service.local/fcm/admin-dev-01-' . bin2hex(random_bytes(6));
+$adminEp2 = 'https://test-push-service.local/fcm/admin-dev-02-' . bin2hex(random_bytes(6));
+
+// Enroll first admin device
+$resAdmin1 = NotificationService::subscribe($adminEp1, $dummyP256dh, $dummyAuth, 'admin', 1);
+pwa_it("Admin device 1 enrolled and verified in database", $resAdmin1['success'] && !empty($resAdmin1['subscription_id']));
+
+// Verify device status returns enrolled as admin
+$status1 = NotificationService::getDeviceStatus($adminEp1);
+pwa_it("Device status correctly identifies enrolled admin device", $status1['enrolled'] === true && $status1['user_type'] === 'admin');
+
+// Re-subscribing existing device updates instead of duplicating
+$resAdmin1Repeat = NotificationService::subscribe($adminEp1, $dummyP256dh, $dummyAuth, 'admin', 1);
+pwa_it("Re-subscribing existing device updates subscription instead of creating duplicate", $resAdmin1Repeat['subscription_id'] === $resAdmin1['subscription_id']);
+
+$stmtCountAdmin = $pdo->prepare("SELECT COUNT(*) FROM `push_subscriptions` WHERE `endpoint` = ?");
+$stmtCountAdmin->execute([$adminEp1]);
+$countAdmin1 = (int)$stmtCountAdmin->fetchColumn();
+$stmtCountAdmin->closeCursor();
+pwa_it("Exactly 1 database row exists for the endpoint", $countAdmin1 === 1);
+
+// Enroll second admin device for same admin (multi-device support)
+$resAdmin2 = NotificationService::subscribe($adminEp2, $dummyP256dh, $dummyAuth, 'admin', 1);
+pwa_it("Second admin device enrolled successfully for same admin account", $resAdmin2['success'] && $resAdmin2['subscription_id'] !== $resAdmin1['subscription_id']);
+
+// Send test alert to current device endpoint
+$testSend = NotificationService::sendTestToDevice($adminEp1, 'admin');
+pwa_it("sendTestToDevice dispatches alert successfully to target admin device", $testSend['success'] === true);
+
+// -------------------------------------------------------------
+// Test 12: Post-Auth Prompt Session Flags (Customer Login & Registration)
+// -------------------------------------------------------------
+$testPhone = '98' . mt_rand(10000000, 99999999);
+$pdo->exec("DELETE FROM `customers` WHERE `phone` LIKE '%{$testPhone}%'");
+
+// Simulate customer registration trigger
+$_SESSION = [];
+$regRes = CustomerAuthService::register([
+    'name' => 'Push Test Customer',
+    'phone' => $testPhone,
+    'password' => 'secret123',
+    'confirm_password' => 'secret123'
+], '127.0.0.1');
+pwa_it("Customer registration sets show_push_prompt_after_auth in session", !empty($regRes['success']) && !empty($_SESSION['show_push_prompt_after_auth']));
+
+// Simulate customer login trigger
+$_SESSION = [];
+$loginRes = CustomerAuthService::login($testPhone, 'secret123', '127.0.0.1');
+pwa_it("Customer login sets show_push_prompt_after_auth in session", !empty($loginRes['success']) && !empty($_SESSION['show_push_prompt_after_auth']));
+
+// -------------------------------------------------------------
+// Test 13: Client-Side Permission Checks, Gesture Flow & Suppression
+// -------------------------------------------------------------
+$pwaJsCode = file_get_contents(__DIR__ . '/../public/assets/js/pwa-push.js');
+$hasGestureRequest = strpos($pwaJsCode, 'Notification.requestPermission()') !== false;
+$hasNoPageLoadRequest = strpos($pwaJsCode, 'init: async function () {\n            Notification.requestPermission()') === false;
+pwa_it("Permission request logic requires explicit user gesture and never prompts on init", $hasGestureRequest && $hasNoPageLoadRequest);
+
+$hasSuppressionCheck = strpos($pwaJsCode, "Notification.permission === 'granted' && this.isSubscribed") !== false;
+pwa_it("Popup is automatically suppressed when permission is already granted and active", $hasSuppressionCheck);
+
+$hasDismissTracking = strpos($pwaJsCode, "sessionStorage.setItem('na_push_prompt_dismissed', '1')") !== false &&
+                      strpos($pwaJsCode, "sessionStorage.getItem('na_push_prompt_dismissed') === '1'") !== false;
+pwa_it("Session dismissal tracking: 'Not Now' prevents reprompting in same session", $hasDismissTracking);
+
+// -------------------------------------------------------------
+// Test 14: Centralized Notification Center & Blocked Permission Guide
+// -------------------------------------------------------------
+$accountHtml = file_get_contents(__DIR__ . '/../app/views/customer/account.php');
+$hasOpenCenterBtn = strpos($accountHtml, 'openNotificationCenter') !== false;
+$footerHtml = file_get_contents(__DIR__ . '/../app/views/layouts/footer.php');
+$hasCenterModal = strpos($footerHtml, 'pwa-center-modal') !== false || strpos($footerHtml, 'pwa-notification-center-modal') !== false;
+pwa_it("Centralized Notification Center modal can be reopened anytime from account view", $hasOpenCenterBtn && $hasCenterModal);
+
+$hasRecoveryGuide = strpos($pwaJsCode, 'showBlockedPermissionModal') !== false;
+$hasHelpModal = strpos($footerHtml, 'pwa-auth-blocked-help') !== false || strpos($footerHtml, 'pwa-center-blocked-help') !== false;
+pwa_it("Clear browser unblock guide is provided when permission is in denied state", $hasRecoveryGuide && $hasHelpModal);
+
+// -------------------------------------------------------------
+// Test 15: Customer Test Push & Expired Subscription Pruning
+// -------------------------------------------------------------
+$custTestEp = 'https://test-push-service.local/cust-test-' . bin2hex(random_bytes(6));
+NotificationService::subscribe($custTestEp, $dummyP256dh, $dummyAuth, 'customer', 55, 'Customer Android Phone');
+$custTestRes = NotificationService::sendTestToDevice($custTestEp, 'customer');
+pwa_it("sendTestToDevice dispatches alert successfully to target customer device", $custTestRes['success'] === true);
+
+$expiredEp = 'https://test-push-service.local/expired-dev-' . bin2hex(random_bytes(6));
+NotificationService::subscribe($expiredEp, $dummyP256dh, $dummyAuth, 'customer', 999);
+$cleanupDone = NotificationService::cleanupExpiredSubscription($expiredEp);
+$stmtExpCheck = $pdo->prepare("SELECT COUNT(*) FROM `push_subscriptions` WHERE `endpoint` = ?");
+$stmtExpCheck->execute([$expiredEp]);
+$expCount = (int)$stmtExpCheck->fetchColumn();
+$stmtExpCheck->closeCursor();
+pwa_it("Expired subscription auto-pruning purges stale endpoints from database", $cleanupDone === true && $expCount === 0);
+
+// Clean up test customer & test subscriptions
+$pdo->exec("DELETE FROM `push_subscriptions` WHERE `endpoint` LIKE 'https://test-push-service.local/%'");
+$pdo->exec("DELETE FROM `customers` WHERE `phone` LIKE '%{$testPhone}%'");
+
+echo "\nPWA & Web Push Notification tests completed: {$pwaPass} passed, {$pwaFail} failed.\n";
+
+

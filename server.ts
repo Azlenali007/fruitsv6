@@ -3,14 +3,17 @@ import http from 'node:http';
 import { spawn, ChildProcess } from 'node:child_process';
 import path from 'node:path';
 
+import fs from 'node:fs';
+
 const PORT = Number(process.env.PORT) || 3000;
 const PHP_PORT = 8080;
 const PHP_HOST = '127.0.0.1';
+const PHP_BIN = fs.existsSync('/usr/bin/php') ? '/usr/bin/php' : 'php';
 
 // Start PHP built-in server serving the public directory with public/index.php as router
-console.log(`[Proxy] Spawning PHP 8.2 built-in server on ${PHP_HOST}:${PHP_PORT}...`);
+console.log(`[Proxy] Spawning PHP server (${PHP_BIN}) on ${PHP_HOST}:${PHP_PORT}...`);
 const phpProcess: ChildProcess = spawn(
-  'php',
+  PHP_BIN,
   ['-S', `${PHP_HOST}:${PHP_PORT}`, '-t', 'public', 'public/index.php'],
   {
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -118,12 +121,6 @@ app.use((req, res) => {
 
 async function startServer() {
   await waitForPhpServer();
-  // Ensure background Linux cron service is active if installed
-  try {
-    spawn('/usr/sbin/cron', [], { stdio: 'ignore', detached: true }).unref();
-  } catch {
-    // Hosted crontab handles scheduled execution
-  }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Proxy] Express reverse proxy listening on http://0.0.0.0:${PORT}`);
   });

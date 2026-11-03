@@ -212,49 +212,10 @@ $storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
     }, true);
 })();
 
-// PWA Service Worker Registration & Installation Manager
-window.deferredPwaPrompt = null;
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/sw.js').then(function(reg) {
-            // Service worker successfully registered
-        }).catch(function(err) {
-            console.log('SW registration error:', err);
-        });
-    });
-}
-
-window.addEventListener('beforeinstallprompt', function(e) {
-    e.preventDefault();
-    window.deferredPwaPrompt = e;
-    var btn = document.getElementById('pwaInstallHeaderBtn');
-    if (btn) btn.classList.remove('hidden');
-    var banner = document.getElementById('pwaInstallBanner');
-    if (banner && !sessionStorage.getItem('pwa_banner_closed')) {
-        banner.classList.remove('hidden');
-    }
-});
-
+// PWA Install helper forwarder
 function handlePwaInstall() {
-    var isIos = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
-    var isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
-
-    if (window.deferredPwaPrompt) {
-        window.deferredPwaPrompt.prompt();
-        window.deferredPwaPrompt.userChoice.then(function(choice) {
-            if (choice.outcome === 'accepted') {
-                var btn = document.getElementById('pwaInstallHeaderBtn');
-                if (btn) btn.classList.add('hidden');
-                var banner = document.getElementById('pwaInstallBanner');
-                if (banner) banner.classList.add('hidden');
-            }
-            window.deferredPwaPrompt = null;
-        });
-    } else if (isIos && !isStandalone) {
-        var modal = document.getElementById('iosInstallModal');
-        if (modal) modal.classList.remove('hidden');
-    } else {
-        alert('To install N.A Coconuts: Open your browser menu (⋮) and select "Install app" or "Add to Home screen".');
+    if (window.NA_PWA) {
+        window.NA_PWA.promptInstall();
     }
 }
 </script>

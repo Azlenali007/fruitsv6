@@ -128,7 +128,7 @@ require __DIR__ . '/layout-header.php';
     }
 }">
 
-    <!-- Page Header & Enrolment Header -->
+    <!-- Page Header -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-gray-100">
         <div>
             <h1 class="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
@@ -140,25 +140,68 @@ require __DIR__ . '/layout-header.php';
             </p>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-            <button 
-                type="button" 
-                onclick="window.NA_PWA.subscribeDevice('admin').then(r => { if(r.success) alert('This device is now subscribed for instant admin order alerts!'); })"
-                class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-            >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
-                <span>Enrol Current Admin Device</span>
-            </button>
-
+        <div class="flex items-center gap-2">
             <button 
                 type="button" 
                 @click="testAdminDevice()" 
                 :disabled="testingAdmin"
                 class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-                <span x-show="!testingAdmin">🔔 Test Push on Admin Devices</span>
-                <span x-show="testingAdmin">Sending alert...</span>
+                <span x-show="!testingAdmin">🔔 Broadcast Test to All Admins</span>
+                <span x-show="testingAdmin">Broadcasting alert...</span>
             </button>
+        </div>
+    </div>
+
+    <!-- Current Admin Device Enrollment & Real-Time Status Card -->
+    <div class="bg-gradient-to-r from-emerald-900 to-brand-800 rounded-3xl p-5 sm:p-6 text-white shadow-md relative overflow-hidden">
+        <div class="absolute right-0 top-0 translate-x-8 -translate-y-8 w-48 h-48 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative z-10">
+            <div class="space-y-1.5 max-w-xl">
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <span class="text-[11px] font-black uppercase tracking-wider text-emerald-300">This Device</span>
+                    <div id="admin-enroll-status-badge">
+                        <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-white/10 text-emerald-100">Checking device subscription...</span>
+                    </div>
+                </div>
+                <h3 class="text-lg font-black tracking-tight text-white">Admin Push Order Alerts on Current Screen</h3>
+                <p id="admin-enroll-status-text" class="text-xs text-emerald-100/90 leading-relaxed">
+                    Enroll this device to receive instant push alerts whenever a customer places an order or completes payment.
+                </p>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <button 
+                    type="button" 
+                    id="admin-enroll-btn"
+                    onclick="window.NA_PWA.subscribeDevice('admin').then(r => { if(r.success) { alert('✓ Device enrolled! This browser is now verified and active for instant admin order alerts.'); } })"
+                    class="bg-white hover:bg-emerald-50 text-[#143823] font-black text-xs py-2.5 px-5 rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer"
+                >
+                    <svg class="w-4 h-4 text-emerald-700" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                    <span>Enrol Current Admin Device</span>
+                </button>
+
+                <button 
+                    type="button" 
+                    id="admin-device-test-btn"
+                    style="display: none;"
+                    onclick="window.NA_PWA.testCurrentDevice('admin')"
+                    class="bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 px-4 rounded-xl border border-emerald-400/40 transition flex items-center gap-1.5 cursor-pointer"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    <span>Send Test Alert to This Screen</span>
+                </button>
+
+                <button 
+                    type="button" 
+                    id="admin-unenroll-btn"
+                    style="display: none;"
+                    onclick="if(confirm('Disconnect this device from admin push alerts?')) window.NA_PWA.unsubscribeDevice()"
+                    class="bg-black/20 hover:bg-black/30 text-emerald-200 hover:text-white font-semibold text-xs py-2.5 px-3.5 rounded-xl transition cursor-pointer"
+                >
+                    Unenroll Device
+                </button>
+            </div>
         </div>
     </div>
 

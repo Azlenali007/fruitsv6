@@ -355,7 +355,7 @@ class RazorpayService {
     /**
      * Fetch payment details from Razorpay API
      */
-    public static function fetchPayment(string $paymentId): array {
+    public static function fetchPayment(string $paymentId, ?string $gatewayOrderIdOrAttemptRef = null): array {
         $keyId = self::getKeyId();
         $keySecret = self::getKeySecret();
 
@@ -372,21 +372,37 @@ class RazorpayService {
 
         // In test mode without external credentials, provide deterministic test payment matching transaction
         if (self::getEnvironment() === 'test' && (empty($keyId) || str_starts_with($keyId, 'rzp_test_sample') || empty($keySecret) || str_starts_with($paymentId, 'pay_mock_') || str_starts_with($paymentId, 'pay_test_'))) {
-            $simAmt = 12000;
+            $simAmt = null;
             $simCur = 'INR';
-            $gwOrderId = 'order_test';
+            $gwOrderId = $gatewayOrderIdOrAttemptRef ?: 'order_test';
             try {
                 $pdo = Database::getConnection();
-                $stmt = $pdo->prepare("SELECT * FROM `payment_transactions` WHERE `gateway_payment_id` = ? OR `gateway_order_id` = ? OR `payment_attempt_ref` = ? ORDER BY `id` DESC LIMIT 1");
-                $stmt->execute([$paymentId, $paymentId, $paymentId]);
-                $tx = $stmt->fetch();
+                $tx = null;
+                if (!empty($gatewayOrderIdOrAttemptRef)) {
+                    $stmt = $pdo->prepare("SELECT * FROM `payment_transactions` WHERE `gateway_order_id` = ? OR `payment_attempt_ref` = ? OR `gateway_payment_id` = ? ORDER BY `id` DESC LIMIT 1");
+                    $stmt->execute([$gatewayOrderIdOrAttemptRef, $gatewayOrderIdOrAttemptRef, $paymentId]);
+                    $tx = $stmt->fetch();
+                }
+                if (!$tx) {
+                    $stmt = $pdo->prepare("SELECT * FROM `payment_transactions` WHERE `gateway_payment_id` = ? OR `gateway_order_id` = ? OR `payment_attempt_ref` = ? ORDER BY `id` DESC LIMIT 1");
+                    $stmt->execute([$paymentId, $paymentId, $paymentId]);
+                    $tx = $stmt->fetch();
+                }
+                if (!$tx) {
+                    $stmt = $pdo->query("SELECT * FROM `payment_transactions` ORDER BY `id` DESC LIMIT 1");
+                    $tx = $stmt->fetch();
+                }
                 if ($tx && !empty($tx['amount_paise'])) {
                     $simAmt = (int)$tx['amount_paise'];
                     $simCur = $tx['currency'] ?? 'INR';
-                    $gwOrderId = $tx['gateway_order_id'] ?? 'order_test';
+                    $gwOrderId = $tx['gateway_order_id'] ?? $gwOrderId;
                 }
             } catch (Exception $e) {
                 // non-blocking
+            }
+
+            if ($simAmt === null || $simAmt <= 0) {
+                $simAmt = 12000;
             }
 
             $mockPayment = [

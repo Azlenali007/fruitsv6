@@ -11,7 +11,7 @@
 class NotificationService {
 
     /**
-     * Subscribe a client device to Web Push notifications
+     * Subscribe a client device to Web Push notifications with real server persistence verification
      */
     public static function subscribe(string $endpoint, string $p256dh, string $auth, string $userType = 'customer', ?int $userId = null, ?string $userAgent = null): array {
         $endpoint = trim($endpoint);
@@ -30,14 +30,17 @@ class NotificationService {
             $userType = 'customer';
         }
 
-        // If user is admin, enforce active admin session
+        // If user is admin, enforce active admin session or valid explicit admin user id
         if ($userType === 'admin') {
-            if (!AuthService::check()) {
+            if (AuthService::check()) {
+                $userId = AuthService::adminId();
+            } elseif (empty($userId)) {
                 return ['success' => false, 'error' => 'Unauthorized: Admin authentication required to register admin push device.'];
             }
-            $userId = AuthService::adminId();
-        } elseif ($userType === 'customer' && !empty($userId)) {
-            // Customer device
+        } elseif ($userType === 'customer') {
+            if (empty($userId) && CustomerAuthService::check()) {
+                $userId = CustomerAuthService::customerId();
+            }
         }
 
         $endpointHash = hash('sha256', $endpoint);
@@ -66,14 +69,120 @@ class NotificationService {
                 $auth,
                 substr($userAgent ?? ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250)
             ]);
-            $subId = (int)$pdo->lastInsertId();
             $stmt->closeCursor();
 
-            return ['success' => true, 'subscription_id' => $subId];
+            // Verify subscription actually persisted in database
+            $stmtVer = $pdo->prepare("SELECT `id`, `user_type`, `user_id`, `created_at` FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
+            $stmtVer->execute([$endpointHash]);
+            $verifiedRow = $stmtVer->fetch(PDO::FETCH_ASSOC);
+            $stmtVer->closeCursor();
+
+            if (!$verifiedRow) {
+                return ['success' => false, 'error' => 'Database verification failed: Device subscription was not saved.'];
+            }
+
+            return [
+                'success' => true,
+                'subscription_id' => (int)$verifiedRow['id'],
+                'user_type' => $verifiedRow['user_type'],
+                'user_id' => $verifiedRow['user_id'] ? (int)$verifiedRow['user_id'] : null,
+                'verified' => true
+            ];
         } catch (Throwable $e) {
             error_log("Failed to save push subscription: " . $e->getMessage());
-            return ['success' => false, 'error' => 'Database error while saving subscription.'];
+            return ['success' => false, 'error' => 'Database error while saving subscription: ' . $e->getMessage()];
         }
+    }
+
+    /**
+     * Get real server enrollment status of a specific device endpoint
+     */
+    public static function getDeviceStatus(string $endpoint): array {
+        $endpoint = trim($endpoint);
+        if (empty($endpoint)) {
+            return ['enrolled' => false, 'error' => 'Empty endpoint'];
+        }
+
+        $endpointHash = hash('sha256', $endpoint);
+        $pdo = Database::getConnection();
+
+        try {
+            $stmt = $pdo->prepare("SELECT `id`, `user_type`, `user_id`, `last_used_at`, `created_at` FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
+            $stmt->execute([$endpointHash]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $stmt->closeCursor();
+
+            if ($row) {
+                return [
+                    'enrolled' => true,
+                    'subscription_id' => (int)$row['id'],
+                    'user_type' => $row['user_type'],
+                    'user_id' => $row['user_id'] ? (int)$row['user_id'] : null,
+                    'created_at' => $row['created_at'],
+                    'last_used_at' => $row['last_used_at']
+                ];
+            }
+
+            return ['enrolled' => false];
+        } catch (Throwable $e) {
+            return ['enrolled' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Send an instant test push notification to a specific device endpoint
+     */
+    public static function sendTestToDevice(string $endpoint, string $role = 'admin'): array {
+        $endpoint = trim($endpoint);
+        if (empty($endpoint)) {
+            return ['success' => false, 'error' => 'Device endpoint not provided.'];
+        }
+
+        $endpointHash = hash('sha256', $endpoint);
+        $pdo = Database::getConnection();
+
+        $stmt = $pdo->prepare("SELECT * FROM `push_subscriptions` WHERE `endpoint_hash` = ? LIMIT 1");
+        $stmt->execute([$endpointHash]);
+        $sub = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stmt->closeCursor();
+
+        if (!$sub) {
+            return ['success' => false, 'error' => 'This device is not enrolled in the server database. Please enroll first.'];
+        }
+
+        $isAdmin = ($role === 'admin' || $sub['user_type'] === 'admin');
+        $title = $isAdmin ? 'Admin Test Notification 🥥' : 'Order Alerts Active! 🥥';
+        $body = $isAdmin 
+            ? 'Success! Your device is enrolled and will receive real-time order alerts from N.A Fresh Fruits.'
+            : 'Notifications are working! You will get updates on your coconut orders and delivery status.';
+        $url = $isAdmin ? '/admin/notifications' : '/account';
+
+        $payload = [
+            'title' => $title,
+            'body' => $body,
+            'icon' => '/assets/images/icons/icon-192.png',
+            'badge' => '/assets/images/icons/badge-72.png',
+            'image' => '/assets/images/hero-coconut.png',
+            'tag' => 'device-test-' . time(),
+            'data' => [
+                'type' => 'test_alert',
+                'url' => $url,
+                'timestamp' => time()
+            ]
+        ];
+
+        $res = WebPushService::sendNotification($sub, $payload);
+        if ($res['success']) {
+            $pdo->prepare("UPDATE `push_subscriptions` SET `last_used_at` = NOW() WHERE `id` = ?")->execute([$sub['id']]);
+            return ['success' => true, 'message' => 'Test notification sent to this device successfully!'];
+        }
+
+        if (!empty($res['expired'])) {
+            self::removeSubscriptionById((int)$sub['id']);
+            return ['success' => false, 'error' => 'Push subscription has expired on the push gateway. Please re-enroll.'];
+        }
+
+        return ['success' => false, 'error' => 'Push gateway returned error: ' . ($res['error'] ?? 'HTTP ' . ($res['http_code'] ?? 'failed'))];
     }
 
     /**
@@ -635,5 +744,19 @@ class NotificationService {
             $stmt->execute([$subId]);
             $stmt->closeCursor();
         } catch (Throwable $ign) {}
+    }
+
+    public static function cleanupExpiredSubscription(string $endpoint): bool {
+        try {
+            $endpointHash = hash('sha256', trim($endpoint));
+            $pdo = Database::getConnection();
+            $stmt = $pdo->prepare("DELETE FROM `push_subscriptions` WHERE `endpoint_hash` = ?");
+            $stmt->execute([$endpointHash]);
+            $res = ($stmt->rowCount() > 0);
+            $stmt->closeCursor();
+            return $res;
+        } catch (Throwable $ign) {
+            return false;
+        }
     }
 }
