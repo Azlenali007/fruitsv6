@@ -199,6 +199,14 @@ require_once __DIR__ . '/test_security_audit.php';
 $passCount += $secPass;
 $failCount += $secFail;
 
+// ---------------------------------------------------------
+// 15. BLINKIT-STYLE DELIVERY BOY SYSTEM SUITE
+// ---------------------------------------------------------
+echo "\n";
+require_once __DIR__ . '/test_delivery_boy_system.php';
+$passCount += $dbRiderPass;
+$failCount += $dbRiderFail;
+
 echo "\n========================================================\n";
 echo "OVERALL SYSTEM SUMMARY: {$passCount} PASSED, {$failCount} FAILED\n";
 echo "========================================================\n";

@@ -377,5 +377,6 @@ Product::delete($newProdId);
 Category::delete($newCatId);
 Combo::delete($comboId);
 CustomerAuthService::logout();
+RazorpayService::setMockHandler(null);
 
 echo "\n--- MULTI-PRODUCT & RAZORPAY TEST SUITE: {$mpPass} PASSED, {$mpFail} FAILED ---\n";

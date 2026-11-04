@@ -828,6 +828,283 @@ try {
             require __DIR__ . '/../app/views/track.php';
             break;
 
+        case '/api/customer/order-tracking':
+            $hash = trim($_GET['h'] ?? '');
+            if (empty($hash)) {
+                json_response(['success' => false, 'error' => 'Tracking hash required'], 400);
+            }
+            $order = Order::getByTrackingHash($hash);
+            if (!$order) {
+                json_response(['success' => false, 'error' => 'Order not found'], 404);
+            }
+            $rider = null;
+            if (!empty($order['delivery_boy_id'])) {
+                $rider = DeliveryBoy::getById((int)$order['delivery_boy_id']);
+                if ($rider) {
+                    unset($rider['password_hash']);
+                }
+            }
+            $otpInfo = DeliveryDispatchService::getOtpInfo((int)$order['id']);
+            json_response([
+                'success' => true,
+                'delivery_workflow_status' => $order['delivery_workflow_status'] ?? 'unassigned',
+                'order_status' => $order['order_status'],
+                'plain_otp' => $otpInfo['plain_otp_for_dev'] ?? null,
+                'is_otp_verified' => !empty($otpInfo['verified_at']),
+                'rider' => $rider
+            ]);
+            break;
+
+        // ------------------------------------------------
+        // Delivery Boy Portal & Authentication Routes
+        // ------------------------------------------------
+        case '/delivery/login':
+            if (DeliveryBoyAuthService::check()) {
+                header('Location: /delivery/dashboard');
+                exit;
+            }
+            if ($method === 'POST') {
+                $token = $_POST[CSRF_TOKEN_KEY] ?? '';
+                if (!verify_csrf_token($token)) {
+                    set_flash('error', 'Session token expired. Please try again.');
+                    header('Location: /delivery/login');
+                    exit;
+                }
+                $loginId = trim($_POST['login_id'] ?? '');
+                $password = $_POST['password'] ?? '';
+                $res = DeliveryBoyAuthService::login($loginId, $password);
+                if ($res['success']) {
+                    $redir = $_SESSION['delivery_redirect_after_login'] ?? '/delivery/dashboard';
+                    unset($_SESSION['delivery_redirect_after_login']);
+                    header('Location: ' . $redir);
+                    exit;
+                }
+                set_flash('error', $res['error'] ?? 'Invalid login credentials.');
+                header('Location: /delivery/login');
+                exit;
+            }
+            require __DIR__ . '/../app/views/delivery/login.php';
+            break;
+
+        case '/delivery/logout':
+            if ($method === 'POST') {
+                DeliveryBoyAuthService::logout();
+                set_flash('success', 'Logged out successfully.');
+            }
+            header('Location: /delivery/login');
+            break;
+
+        case '/delivery/dashboard':
+            DeliveryBoyAuthService::requireLogin();
+            $rider = DeliveryBoyAuthService::rider();
+            $activeOrder = DeliveryDispatchService::getRiderActiveOrder((int)$rider['id']);
+            $availableOrders = DeliveryDispatchService::getAvailableOrdersForRider((int)$rider['id']);
+            $stats = DeliveryBoy::getPerformanceStats((int)$rider['id']);
+            require __DIR__ . '/../app/views/delivery/dashboard.php';
+            break;
+
+        case '/delivery/order':
+            DeliveryBoyAuthService::requireLogin();
+            $orderId = (int)($_GET['id'] ?? 0);
+            $rider = DeliveryBoyAuthService::rider();
+            $order = Order::getById($orderId);
+            if (!$order) {
+                set_flash('error', 'Order not found.');
+                header('Location: /delivery/dashboard');
+                exit;
+            }
+            if (!empty($order['delivery_boy_id']) && (int)$order['delivery_boy_id'] !== (int)$rider['id']) {
+                set_flash('error', 'Unauthorized: You are not assigned to this order.');
+                header('Location: /delivery/dashboard');
+                exit;
+            }
+            $items = Order::getItems($orderId);
+            $timeline = DeliveryDispatchService::getTimeline($orderId);
+            require __DIR__ . '/../app/views/delivery/order.php';
+            break;
+
+        case '/delivery/history':
+            DeliveryBoyAuthService::requireLogin();
+            $rider = DeliveryBoyAuthService::rider();
+            $history = DeliveryDispatchService::getRiderHistory((int)$rider['id']);
+            require __DIR__ . '/../app/views/delivery/history.php';
+            break;
+
+        // ------------------------------------------------
+        // Delivery Boy AJAX API Endpoints
+        // ------------------------------------------------
+        case '/api/delivery/toggle-online':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input[CSRF_TOKEN_KEY] ?? ''));
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'CSRF verification failed'], 403);
+                }
+                $isOnline = !empty($input['is_online']);
+                $riderId = DeliveryBoyAuthService::riderId();
+                DeliveryBoy::setOnlineStatus($riderId, $isOnline);
+                json_response(['success' => true, 'is_online' => $isOnline]);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/available-orders':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            $riderId = DeliveryBoyAuthService::riderId();
+            $orders = DeliveryDispatchService::getAvailableOrdersForRider($riderId);
+            json_response(['success' => true, 'orders' => $orders]);
+            break;
+
+        case '/api/delivery/accept-order':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input[CSRF_TOKEN_KEY] ?? ''));
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'CSRF verification failed'], 403);
+                }
+                $orderId = (int)($input['order_id'] ?? 0);
+                $riderId = DeliveryBoyAuthService::riderId();
+                $res = DeliveryDispatchService::acceptOrderAtomic($orderId, $riderId);
+                json_response($res, $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/reject-order':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input[CSRF_TOKEN_KEY] ?? ''));
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'CSRF verification failed'], 403);
+                }
+                $orderId = (int)($input['order_id'] ?? 0);
+                $reason = trim($input['reason'] ?? 'Rider passed on order');
+                $riderId = DeliveryBoyAuthService::riderId();
+                $res = DeliveryDispatchService::rejectOrder($orderId, $riderId, $reason);
+                json_response($res);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/update-workflow':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input[CSRF_TOKEN_KEY] ?? ''));
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'CSRF verification failed'], 403);
+                }
+                $orderId = (int)($input['order_id'] ?? 0);
+                $target = trim($input['target_status'] ?? '');
+                $lat = isset($input['lat']) ? (float)$input['lat'] : null;
+                $lng = isset($input['lng']) ? (float)$input['lng'] : null;
+                $otp = isset($input['otp']) ? trim((string)$input['otp']) : null;
+
+                $riderId = DeliveryBoyAuthService::riderId();
+                $res = DeliveryDispatchService::updateWorkflowStatus($orderId, $riderId, $target, $lat, $lng, $otp);
+                json_response($res, $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/gps-ping':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $lat = (float)($input['lat'] ?? 0);
+                $lng = (float)($input['lng'] ?? 0);
+                $heading = isset($input['heading']) ? (float)$input['heading'] : null;
+                $speed = isset($input['speed']) ? (float)$input['speed'] : null;
+                $accuracy = isset($input['accuracy']) ? (float)$input['accuracy'] : null;
+                $orderId = !empty($input['order_id']) ? (int)$input['order_id'] : null;
+
+                if ($lat != 0 && $lng != 0) {
+                    $riderId = DeliveryBoyAuthService::riderId();
+                    DeliveryBoy::updateLocation($riderId, $lat, $lng, $heading, $speed, $accuracy, $orderId);
+                }
+                json_response(['success' => true]);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/record-cod':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input[CSRF_TOKEN_KEY] ?? ''));
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'CSRF verification failed'], 403);
+                }
+                $orderId = (int)($input['order_id'] ?? 0);
+                $order = Order::getById($orderId);
+                if (!$order) {
+                    json_response(['success' => false, 'error' => 'Order not found'], 404);
+                }
+                $riderId = DeliveryBoyAuthService::riderId();
+                if ((int)$order['delivery_boy_id'] !== $riderId) {
+                    json_response(['success' => false, 'error' => 'Unauthorized for this order'], 403);
+                }
+                $res = DeliveryDispatchService::recordCodCollection($orderId, $riderId, (float)$order['total_amount']);
+                json_response($res);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/generate-qr':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['csrf_token'] ?? ($input[CSRF_TOKEN_KEY] ?? ''));
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'CSRF verification failed'], 403);
+                }
+                $orderId = (int)($input['order_id'] ?? 0);
+                $order = Order::getById($orderId);
+                if (!$order) {
+                    json_response(['success' => false, 'error' => 'Order not found'], 404);
+                }
+                $res = RazorpayService::createDynamicQr((float)$order['total_amount'], $order['order_number'], $orderId);
+                json_response($res, $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/delivery/check-qr':
+            if (!DeliveryBoyAuthService::check()) {
+                json_response(['success' => false, 'error' => 'Authentication required'], 401);
+            }
+            $qrId = trim($_GET['qr_id'] ?? '');
+            $orderId = (int)($_GET['order_id'] ?? 0);
+            $res = RazorpayService::checkDynamicQrPayment($qrId, $orderId);
+            json_response($res);
+            break;
+
         // ------------------------------------------------
         // Admin Routes
         // ------------------------------------------------
@@ -1422,6 +1699,158 @@ try {
                 exit;
             }
             header('Location: /admin/settings');
+            break;
+
+        // ------------------------------------------------
+        // Admin Delivery Boy & Operations Routes
+        // ------------------------------------------------
+        case '/admin/delivery':
+            AuthService::requireAdmin();
+            DeliveryDispatchService::escalateUnacceptedOrders();
+            $pdo = Database::getConnection();
+            $allRiders = DeliveryBoy::getAll();
+            $onlineRidersCount = count(array_filter($allRiders, fn($r) => !empty($r['is_online']) && $r['status'] === 'active'));
+
+            $stmtUn = $pdo->query("
+                SELECT o.*, TIMESTAMPDIFF(SECOND, o.created_at, NOW()) AS seconds_elapsed
+                FROM orders o
+                WHERE o.fulfilment_method = 'delivery'
+                  AND o.delivery_workflow_status = 'unassigned'
+                  AND o.order_status NOT IN ('cancelled', 'delivered')
+                ORDER BY o.id DESC
+            ");
+            $unassignedOrders = $stmtUn->fetchAll(PDO::FETCH_ASSOC);
+            $escalatedOrders = array_filter($unassignedOrders, fn($o) => !empty($o['delivery_escalated']));
+
+            $stmtAct = $pdo->query("
+                SELECT o.*, db.name AS rider_name, db.mobile AS rider_mobile
+                FROM orders o
+                JOIN delivery_boys db ON db.id = o.delivery_boy_id
+                WHERE o.delivery_workflow_status IN ('accepted', 'reached_shop', 'picked_up', 'out_for_delivery')
+                ORDER BY o.id DESC
+            ");
+            $activeOrders = $stmtAct->fetchAll(PDO::FETCH_ASSOC);
+
+            $codCollections = DeliveryDispatchService::getCodCollections();
+            $pendingCodCollections = array_filter($codCollections, fn($c) => $c['status'] === 'collected_by_rider');
+            $totalPendingCod = array_sum(array_column($pendingCodCollections, 'amount'));
+
+            require __DIR__ . '/../app/views/admin/delivery.php';
+            break;
+
+        case '/admin/delivery/create-rider':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'CSRF verification failed.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                $name = trim($_POST['name'] ?? '');
+                $mobile = trim($_POST['mobile'] ?? '');
+                $loginId = trim($_POST['login_id'] ?? '');
+                $password = $_POST['password'] ?? '';
+
+                if (empty($name) || empty($mobile) || empty($loginId) || empty($password)) {
+                    set_flash('error', 'All fields are required to create a delivery partner account.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+
+                if (DeliveryBoy::getByLoginId($loginId)) {
+                    set_flash('error', 'Login ID already in use. Please choose another.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                if (DeliveryBoy::getByMobile($mobile)) {
+                    set_flash('error', 'Mobile number already registered to another partner.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+
+                DeliveryBoy::create($_POST);
+                set_flash('success', "Delivery partner '{$name}' created successfully.");
+            }
+            header('Location: /admin/delivery');
+            break;
+
+        case '/admin/delivery/toggle-rider-status':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'CSRF verification failed.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                $riderId = (int)($_POST['rider_id'] ?? 0);
+                $rider = DeliveryBoy::getById($riderId);
+                if ($rider) {
+                    $newStatus = ($rider['status'] === 'active') ? 'inactive' : 'active';
+                    DeliveryBoy::update($riderId, [
+                        'status' => $newStatus,
+                        'is_online' => ($newStatus === 'inactive' ? 0 : $rider['is_online'])
+                    ]);
+                    set_flash('success', "Partner '{$rider['name']}' status changed to " . ucfirst($newStatus) . '.');
+                }
+            }
+            header('Location: /admin/delivery');
+            break;
+
+        case '/admin/delivery/assign-order':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'CSRF verification failed.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                $orderId = (int)($_POST['order_id'] ?? 0);
+                $riderId = (int)($_POST['rider_id'] ?? 0);
+                $notes = trim($_POST['notes'] ?? '');
+                $admin = AuthService::user();
+
+                $res = DeliveryDispatchService::adminAssignOrder($orderId, $riderId, (int)($admin['id'] ?? 1), $notes);
+                set_flash($res['success'] ? 'success' : 'error', $res['message'] ?? $res['error']);
+            }
+            header('Location: /admin/delivery');
+            break;
+
+        case '/admin/delivery/reconcile-cod':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'CSRF verification failed.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                $colId = (int)($_POST['collection_id'] ?? 0);
+                $admin = AuthService::user();
+                $res = DeliveryDispatchService::reconcileCodCollection($colId, (int)($admin['id'] ?? 1));
+                set_flash($res['success'] ? 'success' : 'error', $res['message'] ?? $res['error']);
+            }
+            header('Location: /admin/delivery');
+            break;
+
+        case '/admin/delivery/override-otp':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'CSRF verification failed.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                $orderId = (int)($_POST['order_id'] ?? 0);
+                $reason = trim($_POST['reason'] ?? '');
+                $admin = AuthService::user();
+                $res = DeliveryDispatchService::adminEmergencyOverrideOtp($orderId, (int)($admin['id'] ?? 1), $reason);
+                if ($res['success']) {
+                    Order::updateStatus($orderId, 'delivered', 'Emergency Admin Delivery Override: ' . $reason, 'Admin');
+                    $pdo = Database::getConnection();
+                    $pdo->prepare("UPDATE orders SET delivery_workflow_status = 'delivered', delivery_completed_at = NOW() WHERE id = ?")->execute([$orderId]);
+                }
+                set_flash($res['success'] ? 'success' : 'error', $res['message'] ?? $res['error']);
+            }
+            header('Location: /admin/delivery');
             break;
 
         case '/admin/reports':
