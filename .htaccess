@@ -32,6 +32,9 @@ Options -Indexes -MultiViews
     # Route /install and /install/* to public front controller
     RewriteRule ^install(/.*)?$ public/index.php [L,QSA]
 
+    # Route /delboy and /delboy/* to public front controller
+    RewriteRule ^delboy(/.*)?$ public/index.php [L,QSA]
+
     # Serve public assets directly if accessed via /assets/...
     RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
     RewriteRule ^(assets/.*)$ public/$1 [L]

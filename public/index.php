@@ -858,40 +858,47 @@ try {
         // ------------------------------------------------
         // Delivery Boy Portal & Authentication Routes
         // ------------------------------------------------
+        // Dedicated Delivery Boy Portal & Authentication Routes (/delboy)
+        // ------------------------------------------------
+        case '/delboy':
         case '/delivery/login':
             if (DeliveryBoyAuthService::check()) {
                 header('Location: /delivery/dashboard');
                 exit;
             }
+            // Canonical redirection: redirect legacy /delivery/login directly to /delboy
+            if ($uri === '/delivery/login' && $method === 'GET') {
+                header('Location: /delboy');
+                exit;
+            }
             if ($method === 'POST') {
                 $token = $_POST[CSRF_TOKEN_KEY] ?? '';
                 if (!verify_csrf_token($token)) {
-                    set_flash('error', 'Session token expired. Please try again.');
-                    header('Location: /delivery/login');
+                    set_flash('error', 'Session security token expired. Please try again.');
+                    header('Location: /delboy');
                     exit;
                 }
                 $loginId = trim($_POST['login_id'] ?? '');
                 $password = $_POST['password'] ?? '';
-                $res = DeliveryBoyAuthService::login($loginId, $password);
+                $res = DeliveryBoyAuthService::login($loginId, $password, $clientIp);
                 if ($res['success']) {
                     $redir = $_SESSION['delivery_redirect_after_login'] ?? '/delivery/dashboard';
                     unset($_SESSION['delivery_redirect_after_login']);
                     header('Location: ' . $redir);
                     exit;
                 }
-                set_flash('error', $res['error'] ?? 'Invalid login credentials.');
-                header('Location: /delivery/login');
+                set_flash('error', $res['error'] ?? 'Invalid delivery credentials.');
+                header('Location: /delboy');
                 exit;
             }
             require __DIR__ . '/../app/views/delivery/login.php';
             break;
 
         case '/delivery/logout':
-            if ($method === 'POST') {
-                DeliveryBoyAuthService::logout();
-                set_flash('success', 'Logged out successfully.');
-            }
-            header('Location: /delivery/login');
+            DeliveryBoyAuthService::logout();
+            set_flash('success', 'Logged out successfully.');
+            header('Location: /delboy');
+            exit;
             break;
 
         case '/delivery/dashboard':
@@ -1768,8 +1775,78 @@ try {
                     exit;
                 }
 
+                $status = in_array($_POST['status'] ?? '', ['active', 'inactive']) ? $_POST['status'] : 'active';
+                $_POST['status'] = $status;
+
                 DeliveryBoy::create($_POST);
                 set_flash('success', "Delivery partner '{$name}' created successfully.");
+            }
+            header('Location: /admin/delivery');
+            break;
+
+        case '/admin/delivery/edit-rider':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'CSRF verification failed.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+                $riderId = (int)($_POST['rider_id'] ?? 0);
+                $rider = DeliveryBoy::getById($riderId);
+                if (!$rider) {
+                    set_flash('error', 'Delivery partner not found.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+
+                $name = trim($_POST['name'] ?? '');
+                $mobile = trim($_POST['mobile'] ?? '');
+                $loginId = trim($_POST['login_id'] ?? '');
+                $password = $_POST['password'] ?? '';
+                $status = in_array($_POST['status'] ?? '', ['active', 'inactive']) ? $_POST['status'] : 'active';
+                $vehicleType = trim($_POST['vehicle_type'] ?? 'Bike / Scooter');
+                $vehicleNumber = trim($_POST['vehicle_number'] ?? '');
+
+                if (empty($name) || empty($mobile) || empty($loginId)) {
+                    set_flash('error', 'Partner Name, Mobile and Login ID cannot be empty.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+
+                $existingLogin = DeliveryBoy::getByLoginId($loginId);
+                if ($existingLogin && (int)$existingLogin['id'] !== $riderId) {
+                    set_flash('error', 'That Login ID is already in use by another delivery partner.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+
+                $existingMobile = DeliveryBoy::getByMobile($mobile);
+                if ($existingMobile && (int)$existingMobile['id'] !== $riderId) {
+                    set_flash('error', 'That mobile number is already registered to another partner.');
+                    header('Location: /admin/delivery');
+                    exit;
+                }
+
+                $updateData = [
+                    'name' => $name,
+                    'mobile' => $mobile,
+                    'login_id' => $loginId,
+                    'status' => $status,
+                    'vehicle_type' => $vehicleType,
+                    'vehicle_number' => $vehicleNumber
+                ];
+
+                if (!empty($password)) {
+                    $updateData['password'] = $password;
+                }
+
+                if ($status === 'inactive') {
+                    $updateData['is_online'] = 0;
+                }
+
+                DeliveryBoy::update($riderId, $updateData);
+                set_flash('success', "Delivery partner '{$name}' updated successfully.");
             }
             header('Location: /admin/delivery');
             break;

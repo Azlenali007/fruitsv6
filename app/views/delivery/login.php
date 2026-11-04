@@ -48,7 +48,7 @@
     <?php endif; ?>
 
     <!-- Login Form -->
-    <form action="/delivery/login" method="POST" @submit="submitting = true" class="space-y-4">
+    <form action="/delboy" method="POST" @submit="submitting = true" class="space-y-4">
         <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
 
         <div>

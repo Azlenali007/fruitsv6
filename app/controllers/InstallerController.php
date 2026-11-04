@@ -372,7 +372,14 @@ class InstallerController {
                             continue;
                         }
 
-                        $pdo->exec($stmtSql);
+                        try {
+                            $stmtObj = $pdo->query($stmtSql);
+                            if ($stmtObj instanceof PDOStatement) {
+                                $stmtObj->closeCursor();
+                            }
+                        } catch (Exception $e) {
+                            $pdo->exec($stmtSql);
+                        }
                     }
 
                     // Apply any incremental migration files in natural sort order (non-destructive)
@@ -389,7 +396,10 @@ class InstallerController {
                                         $mStmt = trim($mStmt);
                                         if (empty($mStmt) || preg_match('/^\s*(CREATE\s+DATABASE|USE\s+)/i', $mStmt)) continue;
                                         try {
-                                            $pdo->exec($mStmt);
+                                            $mObj = $pdo->query($mStmt);
+                                            if ($mObj instanceof PDOStatement) {
+                                                $mObj->closeCursor();
+                                            }
                                         } catch (Exception $ign) {
                                             // Non-destructive idempotent execution
                                         }
@@ -485,7 +495,7 @@ class InstallerController {
                     // Verify required tables exist
                     $stmtVerify = $pdo->query("SHOW TABLES");
                     $postTables = $stmtVerify->fetchAll(PDO::FETCH_COLUMN);
-                    $required = ['products', 'orders', 'admins', 'settings', 'customers', 'customer_login_attempts', 'categories', 'combos', 'combo_items', 'delivery_areas', 'invoices'];
+                    $required = ['products', 'orders', 'admins', 'settings', 'customers', 'customer_login_attempts', 'categories', 'combos', 'combo_items', 'delivery_areas', 'invoices', 'delivery_boys', 'order_assignments', 'delivery_timeline'];
                     $missingTables = array_diff($required, $postTables);
                     if (!empty($missingTables)) {
                         throw new Exception("Required tables could not be verified: " . implode(', ', $missingTables));
@@ -652,7 +662,8 @@ class InstallerController {
             $requiredTables = [
                 'admins', 'products', 'orders', 'order_items', 'settings',
                 'customers', 'customer_login_attempts', 'categories',
-                'combos', 'combo_items', 'delivery_areas', 'invoices'
+                'combos', 'combo_items', 'delivery_areas', 'invoices',
+                'delivery_boys', 'order_assignments', 'delivery_timeline'
             ];
             $stmt = $pdo->query("SHOW TABLES");
             $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);

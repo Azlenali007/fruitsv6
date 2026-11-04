@@ -496,6 +496,18 @@ CREATE TABLE IF NOT EXISTS `delivery_dynamic_qrs` (
     CONSTRAINT `fk_dynamic_qr_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 22.8 Delivery Boy Login Attempts Table (Security Throttling & Brute-force Defense)
+CREATE TABLE IF NOT EXISTS `delivery_boy_login_attempts` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `identifier` VARCHAR(100) NOT NULL,
+    `ip_address` VARCHAR(45) NOT NULL,
+    `attempted_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `success` TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX `idx_rider_ident_time` (`identifier`, `attempted_at`),
+    INDEX `idx_rider_ip_time` (`ip_address`, `attempted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 
 
 

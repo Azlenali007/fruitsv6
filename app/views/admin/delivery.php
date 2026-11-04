@@ -36,9 +36,9 @@ require __DIR__ . '/layout-header.php';
                     <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
                     <span>Add Delivery Partner</span>
                 </button>
-                <a href="/delivery/login" target="_blank"
+                <a href="/delboy" target="_blank"
                    class="px-4 py-2.5 bg-emerald-950/60 hover:bg-emerald-950 text-white font-bold text-xs rounded-xl border border-emerald-400/30 transition flex items-center gap-1.5">
-                    <span>Open Partner App &rarr;</span>
+                    <span>Open Partner App (/delboy) &rarr;</span>
                 </a>
             </div>
         </div>
@@ -520,6 +520,13 @@ require __DIR__ . '/layout-header.php';
 
                 <div class="grid grid-cols-2 gap-2.5">
                     <div>
+                        <label class="block font-bold text-gray-700 mb-1">Account Status</label>
+                        <select name="status" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                            <option value="active" selected>Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </div>
+                    <div>
                         <label class="block font-bold text-gray-700 mb-1">Vehicle Type</label>
                         <select name="vehicle_type" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
                             <option value="Bike / Scooter">Bike / Scooter</option>
@@ -527,15 +534,80 @@ require __DIR__ . '/layout-header.php';
                             <option value="Bicycle">Bicycle</option>
                         </select>
                     </div>
-                    <div>
-                        <label class="block font-bold text-gray-700 mb-1">Vehicle Reg Number</label>
-                        <input type="text" name="vehicle_number" placeholder="MP 43 AB 1234" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
-                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Vehicle Reg Number</label>
+                    <input type="text" name="vehicle_number" placeholder="MP 43 AB 1234" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
                 </div>
 
                 <div class="pt-3 flex items-center justify-end gap-2 border-t border-gray-100">
                     <button type="button" @click="openAddRiderModal = false" class="px-4 py-2 bg-gray-100 text-gray-700 font-bold rounded-xl">Cancel</button>
                     <button type="submit" class="px-4 py-2 bg-brand-700 text-white font-bold rounded-xl shadow-xs">Save Partner</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 1B: EDIT DELIVERY BOY -->
+    <div x-show="openEditRiderModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div class="bg-white rounded-3xl border border-gray-200 max-w-md w-full p-6 shadow-2xl space-y-4" @click.away="openEditRiderModal = false">
+            <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+                <h3 class="text-base font-black text-gray-900">Edit Delivery Partner</h3>
+                <button type="button" @click="openEditRiderModal = false" class="text-gray-400 hover:text-gray-600">&times;</button>
+            </div>
+
+            <form action="/admin/delivery/edit-rider" method="POST" class="space-y-3.5 text-xs">
+                <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
+                <input type="hidden" name="rider_id" :value="editRiderData.id">
+
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Partner Full Name</label>
+                    <input type="text" name="name" x-model="editRiderData.name" required placeholder="e.g. Rahul Sharma" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Mobile Number</label>
+                        <input type="text" name="mobile" x-model="editRiderData.mobile" required placeholder="9876543210" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Login ID (Unique)</label>
+                        <input type="text" name="login_id" x-model="editRiderData.login_id" required placeholder="rider_rahul" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Reset Password <span class="text-gray-400 font-normal">(Leave blank to keep unchanged)</span></label>
+                    <input type="password" name="password" placeholder="New password (optional)" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Account Status</label>
+                        <select name="status" x-model="editRiderData.status" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1">Vehicle Type</label>
+                        <select name="vehicle_type" x-model="editRiderData.vehicle_type" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                            <option value="Bike / Scooter">Bike / Scooter</option>
+                            <option value="Electric Scooter (EV)">Electric Scooter (EV)</option>
+                            <option value="Bicycle">Bicycle</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-bold text-gray-700 mb-1">Vehicle Reg Number</label>
+                    <input type="text" name="vehicle_number" x-model="editRiderData.vehicle_number" placeholder="MP 43 AB 1234" class="w-full px-3 py-2.5 rounded-xl border border-gray-300 text-xs">
+                </div>
+
+                <div class="pt-3 flex items-center justify-end gap-2 border-t border-gray-100">
+                    <button type="button" @click="openEditRiderModal = false" class="px-4 py-2 bg-gray-100 text-gray-700 font-bold rounded-xl">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-brand-700 text-white font-bold rounded-xl shadow-xs">Update Partner</button>
                 </div>
             </form>
         </div>
@@ -615,6 +687,16 @@ function adminDeliveryApp() {
     return {
         activeSubTab: 'live_map',
         openAddRiderModal: false,
+        openEditRiderModal: false,
+        editRiderData: {
+            id: null,
+            name: '',
+            mobile: '',
+            login_id: '',
+            status: 'active',
+            vehicle_type: 'Bike / Scooter',
+            vehicle_number: ''
+        },
         assignModalOpen: false,
         assignOrderId: null,
         assignOrderNum: '',
@@ -707,6 +789,19 @@ function adminDeliveryApp() {
             this.overrideOrderId = orderId;
             this.overrideOrderNum = orderNum;
             this.overrideModalOpen = true;
+        },
+
+        openEditModal(rider) {
+            this.editRiderData = {
+                id: rider.id,
+                name: rider.name || '',
+                mobile: rider.mobile || '',
+                login_id: rider.login_id || '',
+                status: rider.status || 'active',
+                vehicle_type: rider.vehicle_type || 'Bike / Scooter',
+                vehicle_number: rider.vehicle_number || ''
+            };
+            this.openEditRiderModal = true;
         }
     };
 }

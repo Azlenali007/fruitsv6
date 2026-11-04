@@ -28,56 +28,56 @@ SET @tablename = 'orders';
 
 -- delivery_boy_id
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_boy_id');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_boy_id` INT UNSIGNED NULL DEFAULT NULL AFTER `order_status`, ADD INDEX `idx_orders_delivery_boy_id` (`delivery_boy_id`)', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_boy_id` INT UNSIGNED NULL DEFAULT NULL AFTER `order_status`, ADD INDEX `idx_orders_delivery_boy_id` (`delivery_boy_id`)', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_workflow_status
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_workflow_status');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_workflow_status` ENUM(\'unassigned\', \'accepted\', \'reached_shop\', \'picked_up\', \'out_for_delivery\', \'delivered\', \'cancelled\') NOT NULL DEFAULT \'unassigned\' AFTER `delivery_boy_id`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_workflow_status` ENUM(\'unassigned\', \'accepted\', \'reached_shop\', \'picked_up\', \'out_for_delivery\', \'delivered\', \'cancelled\') NOT NULL DEFAULT \'unassigned\' AFTER `delivery_boy_id`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_assigned_at
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_assigned_at');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_assigned_at` DATETIME NULL DEFAULT NULL AFTER `delivery_workflow_status`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_assigned_at` DATETIME NULL DEFAULT NULL AFTER `delivery_workflow_status`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_accepted_at
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_accepted_at');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_accepted_at` DATETIME NULL DEFAULT NULL AFTER `delivery_assigned_at`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_accepted_at` DATETIME NULL DEFAULT NULL AFTER `delivery_assigned_at`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_picked_up_at
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_picked_up_at');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_picked_up_at` DATETIME NULL DEFAULT NULL AFTER `delivery_accepted_at`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_picked_up_at` DATETIME NULL DEFAULT NULL AFTER `delivery_accepted_at`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_completed_at
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_completed_at');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_completed_at` DATETIME NULL DEFAULT NULL AFTER `delivery_picked_up_at`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_completed_at` DATETIME NULL DEFAULT NULL AFTER `delivery_picked_up_at`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_escalated
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_escalated');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_escalated` TINYINT(1) NOT NULL DEFAULT 0 AFTER `delivery_completed_at`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_escalated` TINYINT(1) NOT NULL DEFAULT 0 AFTER `delivery_completed_at`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- delivery_escalated_at
 SET @prepexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@dbname AND TABLE_NAME=@tablename AND COLUMN_NAME='delivery_escalated_at');
-SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_escalated_at` DATETIME NULL DEFAULT NULL AFTER `delivery_escalated`', 'SELECT 1');
+SET @statement = IF(@prepexists = 0, 'ALTER TABLE `orders` ADD COLUMN `delivery_escalated_at` DATETIME NULL DEFAULT NULL AFTER `delivery_escalated`', 'DO 0');
 PREPARE stmt FROM @statement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
@@ -182,3 +182,15 @@ CREATE TABLE IF NOT EXISTS `delivery_dynamic_qrs` (
     INDEX `idx_qr_order_status` (`order_id`, `status`),
     CONSTRAINT `fk_dynamic_qr_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 9. Delivery Boy Login Attempts Table (Security Throttling & Brute-force Defense)
+CREATE TABLE IF NOT EXISTS `delivery_boy_login_attempts` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `identifier` VARCHAR(100) NOT NULL,
+    `ip_address` VARCHAR(45) NOT NULL,
+    `attempted_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `success` TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX `idx_rider_ident_time` (`identifier`, `attempted_at`),
+    INDEX `idx_rider_ip_time` (`ip_address`, `attempted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
