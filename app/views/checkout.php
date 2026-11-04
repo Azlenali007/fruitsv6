@@ -42,7 +42,7 @@ $activeDeliveryAreas = DeliveryArea::getActiveAreas();
 // Initial customer details from verified authenticated session
 $savedName = $customer['name'] ?? ($_SESSION['last_customer_name'] ?? '');
 $savedPhone = $customer['phone'] ?? ($_SESSION['last_customer_phone'] ?? '');
-$savedAddress = !empty($customer['address']) ? $customer['address'] : ($_SESSION['last_customer_address'] ?? '123, Green Park, Near Main Road, Bhopal, Madhya Pradesh - 462016');
+$savedAddress = !empty($customer['address']) ? $customer['address'] : ($_SESSION['last_customer_address'] ?? 'Station Road, Near Municipal Market, Jaora, Madhya Pradesh - 457226');
 $idempotencyKey = bin2hex(random_bytes(16));
 
 // Prepare structured configuration payload for JavaScript
@@ -55,8 +55,24 @@ $checkoutConfig = [
     'customerAddress' => (string)$savedAddress,
     'customerLandmark' => '',
     'selectedAreaId' => '',
-    'deliveryAreaName' => '',
+    'deliveryAreaName' => 'Jaora City (PIN 457226)',
     'deliveryAvailable' => true,
+    'fulfilmentMethod' => 'delivery',
+    'storeLat' => 23.635784,
+    'storeLng' => 75.124683,
+    'storeAddress' => (string)Setting::get('store_address', 'Station Road, Opp. Municipal Market, Jaora, Madhya Pradesh - 457226'),
+    'shopPickupEnabled' => (bool)(Setting::get('shop_pickup_enabled', '1') === '1'),
+    'googleMapsApiKey' => 'AIzaSyABvsHD8lil-4uRWC5lUT_qIQgGMpV0wGk',
+    'jaoraBoundary' => [
+        ['lat' => 23.6300, 'lng' => 75.1050],
+        ['lat' => 23.6500, 'lng' => 75.1100],
+        ['lat' => 23.6580, 'lng' => 75.1250],
+        ['lat' => 23.6550, 'lng' => 75.1400],
+        ['lat' => 23.6420, 'lng' => 75.1480],
+        ['lat' => 23.6220, 'lng' => 75.1450],
+        ['lat' => 23.6120, 'lng' => 75.1320],
+        ['lat' => 23.6150, 'lng' => 75.1150]
+    ],
     'subtotal' => (float)$subtotal,
     'defaultDeliveryFee' => (float)$baseDeliveryCharge,
     'freeDeliveryAbove' => (float)$freeDeliveryAbove,
@@ -68,6 +84,9 @@ $checkoutConfig = [
     'csrfToken' => csrf_token(),
 ];
 ?>
+
+<!-- Google Maps Platform JavaScript API with Geometry & Places -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABvsHD8lil-4uRWC5lUT_qIQgGMpV0wGk&libraries=geometry,places"></script>
 
 <?php if ($razorpayEnabled): ?>
 <!-- Razorpay Standard Checkout Script -->

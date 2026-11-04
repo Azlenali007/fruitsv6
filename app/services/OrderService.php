@@ -111,10 +111,9 @@ class OrderService {
         }
 
         $fulfilment = trim($postData['fulfilment_method'] ?? 'delivery');
-        if ($fulfilment === 'pickup') {
-            return ['success' => false, 'error' => 'Shop pickup is not available. All orders are delivered directly to your doorstep.'];
+        if ($fulfilment !== 'pickup') {
+            $fulfilment = 'delivery';
         }
-        $fulfilment = 'delivery';
         $address = trim($postData['delivery_address'] ?? '');
 
         if (empty($name) || mb_strlen($name) < 2) {
@@ -127,21 +126,38 @@ class OrderService {
             return ['success' => false, 'error' => 'Please enter a valid 10-digit mobile number.'];
         }
 
-        if (empty($address) || mb_strlen($address) < 8) {
-            return ['success' => false, 'error' => 'Please provide a complete delivery address including street and locality.'];
-        }
-
-        // Validate Delivery Area & Coordinates
         $lat = isset($postData['latitude']) && is_numeric($postData['latitude']) ? (float)$postData['latitude'] : null;
         $lng = isset($postData['longitude']) && is_numeric($postData['longitude']) ? (float)$postData['longitude'] : null;
         $areaId = !empty($postData['delivery_area_id']) ? (int)$postData['delivery_area_id'] : null;
+        $eligibility = ['deliverable' => true, 'area_id' => null, 'area_name' => 'Shop Pickup', 'delivery_charge' => 0.0];
 
-        $eligibility = AreaService::checkDeliveryEligibility($lat, $lng, $areaId);
-        if (!$eligibility['deliverable']) {
-            return [
-                'success' => false,
-                'error' => $eligibility['message'] ?: 'Sorry, delivery is not available at your location.'
-            ];
+        if ($fulfilment === 'delivery') {
+            if (empty($address) || mb_strlen($address) < 8) {
+                return ['success' => false, 'error' => 'Please provide a complete delivery address including street and locality in Jaora.'];
+            }
+
+            // Enforce Jaora-only delivery boundary check (PIN 457226 / Polygon)
+            $jaoraValidation = AreaService::validateJaoraDelivery($address, $lat, $lng);
+            if (!$jaoraValidation['valid']) {
+                return [
+                    'success' => false,
+                    'error' => $jaoraValidation['error'] ?: 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.'
+                ];
+            }
+
+            $eligibility = AreaService::checkDeliveryEligibility($lat, $lng, $areaId);
+            if (!$eligibility['deliverable']) {
+                return [
+                    'success' => false,
+                    'error' => $eligibility['message'] ?: 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.'
+                ];
+            }
+        } else {
+            // Pickup at verified store location
+            $storeAddress = Setting::get('store_address', 'Station Road, Opp. Municipal Market, Jaora, Madhya Pradesh - 457226');
+            $address = 'Store Self-Pickup: ' . $storeAddress;
+            $lat = (float)Setting::get('store_latitude', '23.635784');
+            $lng = (float)Setting::get('store_longitude', '75.124683');
         }
 
         // 5. Cart Validation
@@ -160,11 +176,11 @@ class OrderService {
             'customer_id' => (int)$customer['id'],
             'customer_name' => $name,
             'customer_phone' => '+91 ' . $cleanPhone,
-            'fulfilment_method' => 'delivery',
+            'fulfilment_method' => $fulfilment,
             'coupon_code' => $couponCode,
             'delivery_address' => $address,
-            'delivery_area_id' => $eligibility['area_id'] ?? $areaId,
-            'delivery_area_name' => $eligibility['area_name'] ?? trim($postData['delivery_area_name'] ?? ''),
+            'delivery_area_id' => ($fulfilment === 'pickup') ? null : ($eligibility['area_id'] ?? $areaId),
+            'delivery_area_name' => ($fulfilment === 'pickup') ? 'Store Pickup (Jaora)' : ($eligibility['area_name'] ?? trim($postData['delivery_area_name'] ?? 'Jaora')),
             'latitude' => $lat,
             'longitude' => $lng,
             'payment_method' => $paymentMethod,

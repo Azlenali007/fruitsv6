@@ -3,16 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Active Delivery #<?= e($order['order_number']) ?> - Partner Panel</title>
+    <title>Active Delivery #<?= e($order['order_number']) ?> - Delivery Partner Panel</title>
     <link rel="icon" type="image/svg+xml" href="/assets/images/favicon.svg">
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#064e3b">
     <meta name="csrf-token" content="<?= csrf_token() ?>">
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
-    <!-- Leaflet CSS & JS for Live Delivery Map -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- Google Maps Platform JavaScript API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABvsHD8lil-4uRWC5lUT_qIQgGMpV0wGk&libraries=geometry"></script>
     <style>[x-cloak] { display: none !important; }</style>
 </head>
 <body class="h-full bg-slate-950 text-slate-100 font-sans antialiased pb-28"
@@ -41,14 +40,9 @@
     <main class="max-w-lg mx-auto px-4 py-4 space-y-4">
 
         <!-- Flash messages -->
-        <?php if ($msg = get_flash('success')): ?>
-            <div class="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-2xl text-emerald-200 text-xs">
-                <?= e($msg) ?>
-            </div>
-        <?php endif; ?>
-        <?php if ($msg = get_flash('error')): ?>
-            <div class="p-3 bg-red-950/80 border border-red-500/50 rounded-2xl text-red-200 text-xs">
-                <?= e($msg) ?>
+        <?php $flash = get_flash(); if ($flash): ?>
+            <div class="p-3 <?= ($flash['type'] ?? '') === 'error' ? 'bg-red-950/80 border-red-500/50 text-red-200' : 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200' ?> border rounded-2xl text-xs">
+                <?= e($flash['message'] ?? '') ?>
             </div>
         <?php endif; ?>
 
@@ -108,18 +102,18 @@
             </div>
         </div>
 
-        <!-- Interactive Live GPS Map -->
+        <!-- Google Maps Live GPS Radar & Route -->
         <div class="bg-slate-900 border border-slate-800 rounded-3xl p-3 shadow-xl overflow-hidden">
             <div class="flex items-center justify-between mb-2 px-1">
                 <span class="text-xs font-bold text-white flex items-center gap-1.5">
                     <span>🗺️</span>
-                    <span>Live Route & GPS Radar</span>
+                    <span>Google Maps Route & Live Radar</span>
                 </span>
                 <span class="text-[11px] font-bold text-emerald-400" x-text="etaText || 'Calculating ETA...'"></span>
             </div>
             <div id="deliveryMap" class="w-full h-48 sm:h-56 rounded-2xl border border-slate-800 bg-slate-950"></div>
             <div class="mt-2 text-[11px] text-slate-400 flex items-center justify-between px-1">
-                <span>🟢 Store &nbsp; 🛵 Rider &nbsp; 📍 Customer</span>
+                <span>🏬 Store &nbsp; 🛵 You &nbsp; 📍 Customer</span>
                 <button type="button" @click="recenterMap()" class="text-emerald-400 hover:underline">Re-center</button>
             </div>
         </div>
@@ -147,10 +141,16 @@
                         <span class="text-slate-300"><?= nl2br(e($order['delivery_address'])) ?></span>
                     </div>
                 </div>
+                <?php if (!empty($order['landmark'])): ?>
+                    <div class="flex items-start gap-2 text-slate-300">
+                        <span class="text-slate-500">🏛️</span>
+                        <span>Landmark: <strong class="text-white"><?= e($order['landmark']) ?></strong></span>
+                    </div>
+                <?php endif; ?>
                 <?php if (!empty($order['notes'])): ?>
                     <div class="p-2 rounded-xl bg-slate-800/80 text-[11px] text-amber-300 flex items-start gap-1.5 mt-2">
                         <span>📝</span>
-                        <span>Customer Note: <?= e($order['notes']) ?></span>
+                        <span>Delivery Instructions: <?= e($order['notes']) ?></span>
                     </div>
                 <?php endif; ?>
             </div>
@@ -181,7 +181,7 @@
             <!-- Total Amount & Payment Status -->
             <div class="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between">
                 <div>
-                    <span class="text-[11px] text-slate-400 block">Total Amount</span>
+                    <span class="text-[11px] text-slate-400 block">Total Order Amount</span>
                     <strong class="text-lg font-black text-emerald-400">₹<?= number_format((float)$order['total_amount'], 2) ?></strong>
                 </div>
 
@@ -208,7 +208,7 @@
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                         <span class="text-xl">💳</span>
-                        <h3 class="text-sm font-bold text-white">Payment Required at Delivery</h3>
+                        <h3 class="text-sm font-bold text-white">Payment Required at Doorstep</h3>
                     </div>
                     <span class="text-sm font-black text-amber-400">₹<?= number_format((float)$order['total_amount'], 2) ?></span>
                 </div>
@@ -261,54 +261,77 @@
             <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Action Required</h3>
 
             <!-- State 1: Accepted -> Reached Shop -->
-            <div x-show="currentStep === 'accepted'">
-                <p class="text-xs text-slate-300 mb-3">
-                    Head to the store counter to pick up the customer's fresh harvest order.
+            <div x-show="currentStep === 'accepted'" class="space-y-3">
+                <p class="text-xs text-slate-300">
+                    Head to the store counter to pick up the customer's fresh harvest order. Use Google Maps navigation to reach the shop.
                 </p>
-                <button type="button"
-                        @click="advanceWorkflow('reached_shop')"
-                        :disabled="actionLoading"
-                        class="w-full py-4 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-500/30 transition flex items-center justify-center gap-2">
-                    <span>🏬 I Have Reached Store</span>
-                </button>
+                <div class="space-y-2">
+                    <a href="https://www.google.com/maps/dir/?api=1&destination=23.635784,75.124683"
+                       target="_blank"
+                       class="w-full py-3.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-extrabold text-sm rounded-2xl shadow-lg shadow-blue-500/30 transition flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                        <span>🧭 Navigate to Shop (Google Maps)</span>
+                    </a>
+                    <button type="button"
+                            @click="advanceWorkflow('reached_shop')"
+                            :disabled="actionLoading"
+                            class="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-500/30 transition flex items-center justify-center gap-2">
+                        <span>🏬 I Have Reached Store</span>
+                    </button>
+                </div>
             </div>
 
             <!-- State 2: Reached Shop -> Picked Up -->
-            <div x-show="currentStep === 'reached_shop'">
-                <p class="text-xs text-slate-300 mb-3">
-                    Check the items on counter and pack them securely on your bike.
+            <div x-show="currentStep === 'reached_shop'" class="space-y-3">
+                <p class="text-xs text-slate-300">
+                    Check the items on store counter and pack them securely on your bike before confirming pickup.
                 </p>
                 <button type="button"
                         @click="advanceWorkflow('picked_up')"
                         :disabled="actionLoading"
                         class="w-full py-4 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-500/30 transition flex items-center justify-center gap-2">
-                    <span>🥥 Order Picked Up from Store</span>
+                    <span>🥥 Confirm Order Picked Up from Store</span>
                 </button>
             </div>
 
             <!-- State 3: Picked Up -> Out for Delivery -->
-            <div x-show="currentStep === 'picked_up'">
-                <p class="text-xs text-slate-300 mb-3">
-                    Start driving towards the customer location. This will activate live customer tracking and generate the customer delivery OTP.
+            <div x-show="currentStep === 'picked_up'" class="space-y-3">
+                <p class="text-xs text-slate-300">
+                    Items are packed! Open Google Maps to navigate directly to the customer's exact location, then tap Start Delivery to activate live tracking.
                 </p>
-                <button type="button"
-                        @click="advanceWorkflow('out_for_delivery')"
-                        :disabled="actionLoading"
-                        class="w-full py-4 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-500/30 transition flex items-center justify-center gap-2">
-                    <span>🛵 Start Delivery (Out for Delivery)</span>
-                </button>
+                <div class="space-y-2">
+                    <a :href="'https://www.google.com/maps/dir/?api=1&destination=' + destLat + ',' + destLng"
+                       target="_blank"
+                       class="w-full py-3.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-extrabold text-sm rounded-2xl shadow-lg shadow-blue-500/30 transition flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                        <span>🧭 Navigate to Customer (Google Maps)</span>
+                    </a>
+                    <button type="button"
+                            @click="advanceWorkflow('out_for_delivery')"
+                            :disabled="actionLoading"
+                            class="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-500/30 transition flex items-center justify-center gap-2">
+                        <span>🛵 Start Delivery (Out for Delivery)</span>
+                    </button>
+                </div>
             </div>
 
             <!-- State 4: Out for Delivery -> Delivered (OTP Verification) -->
             <div x-show="currentStep === 'out_for_delivery'" class="space-y-3">
+                <a :href="'https://www.google.com/maps/dir/?api=1&destination=' + destLat + ',' + destLng"
+                   target="_blank"
+                   class="w-full py-2.5 bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/40 text-blue-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 mb-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+                    <span>🧭 Google Maps Navigation to Customer</span>
+                </a>
+
                 <p class="text-xs text-slate-300">
-                    Ask the customer for their <strong class="text-emerald-400">4-digit Delivery OTP</strong> displayed on their tracking screen.
+                    Ask customer for their <strong class="text-emerald-400">4-digit Delivery Confirmation OTP</strong> displayed on their tracking screen.
                 </p>
 
                 <div class="flex items-center gap-2">
                     <input type="number"
                            x-model="enteredOtp"
-                           placeholder="Enter 4-digit OTP"
+                           placeholder="4-digit OTP"
                            maxlength="6"
                            class="flex-1 py-3 px-4 bg-slate-800 border border-slate-700 rounded-2xl text-white text-center text-lg font-black tracking-widest placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                     <button type="button"
@@ -328,10 +351,10 @@
                 </div>
                 <h4 class="text-sm font-black text-emerald-400">Order Completed & Delivered!</h4>
                 <p class="text-xs text-slate-400">
-                    Thank you for the quick and safe delivery.
+                    Delivery confirmation recorded in system audit timeline.
                 </p>
                 <a href="/delivery/dashboard"
-                   class="inline-block mt-2 px-5 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-md">
+                   class="inline-block mt-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition">
                     Return to Dashboard &rarr;
                 </a>
             </div>
@@ -369,10 +392,10 @@
             gpsStatusText: 'Connecting GPS...',
             currentLat: null,
             currentLng: null,
-            storeLat: 23.8920,
-            storeLng: 75.1320,
-            destLat: <?= !empty($order['latitude']) ? (float)$order['latitude'] : 23.8940 ?>,
-            destLng: <?= !empty($order['longitude']) ? (float)$order['longitude'] : 75.1350 ?>,
+            storeLat: <?= (float)Setting::get('store_latitude', '23.635784') ?>,
+            storeLng: <?= (float)Setting::get('store_longitude', '75.124683') ?>,
+            destLat: <?= !empty($order['latitude']) ? (float)$order['latitude'] : 23.635784 ?>,
+            destLng: <?= !empty($order['longitude']) ? (float)$order['longitude'] : 75.124683 ?>,
             etaText: '',
             map: null,
             riderMarker: null,
@@ -409,40 +432,43 @@
 
             initMap() {
                 const container = document.getElementById('deliveryMap');
-                if (!container) return;
+                if (!container || typeof google === 'undefined' || !google.maps) return;
 
-                this.map = L.map('deliveryMap', {
-                    zoomControl: false,
-                    attributionControl: false
-                }).setView([this.storeLat, this.storeLng], 14);
+                const centerPos = { lat: this.storeLat, lng: this.storeLng };
 
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19
-                }).addTo(this.map);
-
-                // Store Marker (Green Shop Pin)
-                const storeIcon = L.divIcon({
-                    className: 'custom-div-icon',
-                    html: '<div style="background:#059669; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.5); font-size:14px;">🏬</div>',
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14]
+                this.map = new google.maps.Map(container, {
+                    center: centerPos,
+                    zoom: 14,
+                    disableDefaultUI: true,
+                    zoomControl: true,
+                    styles: [
+                        { elementType: "geometry", stylers: [{ color: "#0f172a" }] },
+                        { elementType: "labels.text.stroke", stylers: [{ color: "#0f172a" }] },
+                        { elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
+                        { featureType: "road", elementType: "geometry", stylers: [{ color: "#1e293b" }] },
+                        { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#334155" }] },
+                        { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#cbd5e1" }] },
+                        { featureType: "water", elementType: "geometry", stylers: [{ color: "#0284c7" }] }
+                    ]
                 });
-                this.storeMarker = L.marker([this.storeLat, this.storeLng], { icon: storeIcon }).addTo(this.map);
-                this.storeMarker.bindPopup('<strong>N.A Fresh Coconuts Store</strong>');
 
-                // Customer Destination Marker (Red Pin)
-                const destIcon = L.divIcon({
-                    className: 'custom-div-icon',
-                    html: '<div style="background:#dc2626; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.5); font-size:14px;">📍</div>',
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14]
+                // Store Marker (Fixed Shop Location: Jaora)
+                this.storeMarker = new google.maps.Marker({
+                    position: { lat: this.storeLat, lng: this.storeLng },
+                    map: this.map,
+                    title: "N.A Fresh Fruits & Coconuts - Store HQ",
+                    label: { text: "🏬", fontSize: "16px" }
                 });
-                this.destMarker = L.marker([this.destLat, this.destLng], { icon: destIcon }).addTo(this.map);
-                this.destMarker.bindPopup('<strong>Customer Destination</strong>');
 
-                // Fit bounds between store and destination initially
-                const group = L.featureGroup([this.storeMarker, this.destMarker]);
-                this.map.fitBounds(group.getBounds().pad(0.3));
+                // Customer Destination Pin
+                this.destMarker = new google.maps.Marker({
+                    position: { lat: this.destLat, lng: this.destLng },
+                    map: this.map,
+                    title: "Customer Destination",
+                    label: { text: "📍", fontSize: "16px" }
+                });
+
+                this.recenterMap();
             },
 
             startGpsTracking() {
@@ -466,35 +492,32 @@
                     },
                     err => {
                         this.gpsActive = false;
-                        this.gpsStatusText = 'GPS Denied / Unavailable';
+                        this.gpsStatusText = 'GPS Denied / Off';
                     },
                     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
                 );
             },
 
             updateRiderMarker(lat, lng) {
-                if (!this.map) return;
-                const riderIcon = L.divIcon({
-                    className: 'custom-div-icon',
-                    html: '<div style="background:#10b981; width:34px; height:34px; border-radius:50%; border:3px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 0 15px #10b981; font-size:18px;">🛵</div>',
-                    iconSize: [34, 34],
-                    iconAnchor: [17, 17]
-                });
+                if (!this.map || typeof google === 'undefined') return;
+                const pos = { lat: parseFloat(lat), lng: parseFloat(lng) };
 
                 if (this.riderMarker) {
-                    this.riderMarker.setLatLng([lat, lng]);
+                    this.riderMarker.setPosition(pos);
                 } else {
-                    this.riderMarker = L.marker([lat, lng], { icon: riderIcon }).addTo(this.map);
-                    this.riderMarker.bindPopup('<strong>Your Live Location</strong>');
+                    this.riderMarker = new google.maps.Marker({
+                        position: pos,
+                        map: this.map,
+                        title: "Your Live Position",
+                        label: { text: "🛵", fontSize: "18px" }
+                    });
                 }
             },
 
             updateEta(riderLat, riderLng) {
-                // Target is store if before pickup, destination if out for delivery
                 const targetLat = (this.currentStep === 'out_for_delivery') ? this.destLat : this.storeLat;
                 const targetLng = (this.currentStep === 'out_for_delivery') ? this.destLng : this.storeLng;
 
-                // Haversine
                 const R = 6371;
                 const dLat = (targetLat - riderLat) * Math.PI / 180;
                 const dLon = (targetLng - riderLng) * Math.PI / 180;
@@ -509,11 +532,14 @@
             },
 
             recenterMap() {
-                if (!this.map) return;
-                const markers = [this.storeMarker, this.destMarker];
-                if (this.riderMarker) markers.push(this.riderMarker);
-                const group = L.featureGroup(markers);
-                this.map.fitBounds(group.getBounds().pad(0.3));
+                if (!this.map || typeof google === 'undefined') return;
+                const bounds = new google.maps.LatLngBounds();
+                bounds.extend({ lat: this.storeLat, lng: this.storeLng });
+                bounds.extend({ lat: this.destLat, lng: this.destLng });
+                if (this.currentLat && this.currentLng) {
+                    bounds.extend({ lat: this.currentLat, lng: this.currentLng });
+                }
+                this.map.fitBounds(bounds);
             },
 
             sendGpsPing(coords) {
@@ -530,7 +556,8 @@
                         lng: coords.longitude,
                         heading: coords.heading,
                         speed: coords.speed,
-                        accuracy: coords.accuracy
+                        accuracy: coords.accuracy,
+                        csrf_token: csrf
                     })
                 }).catch(() => {});
             },
@@ -549,7 +576,8 @@
                             order_id: this.orderId,
                             target_status: targetStatus,
                             lat: this.currentLat,
-                            lng: this.currentLng
+                            lng: this.currentLng,
+                            csrf_token: csrf
                         })
                     });
                     const data = await res.json();
@@ -585,7 +613,8 @@
                             target_status: 'delivered',
                             otp: this.enteredOtp,
                             lat: this.currentLat,
-                            lng: this.currentLng
+                            lng: this.currentLng,
+                            csrf_token: csrf
                         })
                     });
                     const data = await res.json();
@@ -603,7 +632,7 @@
             },
 
             async collectCash() {
-                if (!confirm('Confirm that you have collected exact cash from the customer?')) return;
+                if (!confirm('Confirm you have collected cash amount of ₹<?= number_format((float)$order['total_amount'], 2) ?> from customer?')) return;
                 this.processingPayment = true;
                 try {
                     const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
@@ -614,7 +643,9 @@
                             'X-CSRF-TOKEN': csrf
                         },
                         body: JSON.stringify({
-                            order_id: this.orderId
+                            order_id: this.orderId,
+                            amount: <?= (float)$order['total_amount'] ?>,
+                            csrf_token: csrf
                         })
                     });
                     const data = await res.json();
@@ -625,7 +656,7 @@
                         alert(data.error || 'Failed to record cash collection.');
                     }
                 } catch(e) {
-                    alert('Network error.');
+                    alert('Network error recording cash.');
                 } finally {
                     this.processingPayment = false;
                 }
@@ -636,45 +667,42 @@
                 this.qrError = '';
                 try {
                     const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-                    const res = await fetch('/api/delivery/generate-qr', {
+                    const res = await fetch('/api/delivery/create-dynamic-qr', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRF-TOKEN': csrf
                         },
                         body: JSON.stringify({
-                            order_id: this.orderId
+                            order_id: this.orderId,
+                            csrf_token: csrf
                         })
                     });
                     const data = await res.json();
                     if (data.success && data.qr_image_url) {
                         this.qrGenerated = true;
                         this.qrImageUrl = data.qr_image_url;
-                        this.qrId = data.qr_id;
+                        this.qrId = data.qr_id || '';
                         this.startQrPolling();
                     } else {
-                        this.qrError = data.error || 'Failed to generate Dynamic QR from Razorpay.';
-                        if (data.help_text) {
-                            this.qrError += ' ' + data.help_text;
-                        }
+                        this.qrError = data.error || 'Could not generate dynamic QR. Please collect Cash.';
                     }
                 } catch(e) {
-                    this.qrError = 'Network error contacting Razorpay gateway.';
+                    this.qrError = 'Network error requesting UPI QR.';
                 } finally {
                     this.processingPayment = false;
                 }
             },
 
             startQrPolling() {
-                if (!this.qrId) return;
                 this.qrChecking = true;
-                const timer = setInterval(async () => {
+                const interval = setInterval(async () => {
                     try {
-                        const res = await fetch('/api/delivery/check-qr?qr_id=' + encodeURIComponent(this.qrId) + '&order_id=' + this.orderId);
+                        const res = await fetch('/api/delivery/check-qr-status?order_id=' + this.orderId);
                         const data = await res.json();
-                        if (data.success && data.is_paid) {
-                            clearInterval(timer);
-                            alert('Payment received and verified via Razorpay UPI!');
+                        if (data.paid) {
+                            clearInterval(interval);
+                            alert('UPI Payment Verified successfully!');
                             window.location.reload();
                         }
                     } catch(e) {}

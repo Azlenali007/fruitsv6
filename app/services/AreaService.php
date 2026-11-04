@@ -220,7 +220,7 @@ class AreaService {
                     'area_id' => null,
                     'area_name' => null,
                     'delivery_charge' => $defaultCharge,
-                    'message' => 'Sorry, delivery is not available at your location.'
+                    'message' => 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.'
                 ];
             }
         }
@@ -239,18 +239,62 @@ class AreaService {
             }
         }
 
-        // 3. Address-based delivery fallback (standard store delivery rate)
-        $firstArea = !empty($activeAreas) ? reset($activeAreas) : null;
-        $charge = $firstArea ? (float)$firstArea['delivery_charge'] : $defaultCharge;
-        $areaName = $firstArea ? $firstArea['name'] : 'Local Delivery Area';
-        $areaId = $firstArea ? (int)$firstArea['id'] : null;
+        // 3. Fallback to active Jaora area if inside Jaora
+        $jaoraArea = null;
+        foreach ($activeAreas as $a) {
+            if (!empty($a['boundary_geojson']) || stripos($a['name'], 'Jaora') !== false) {
+                $jaoraArea = $a;
+                break;
+            }
+        }
+        $selected = $jaoraArea ?: reset($activeAreas);
+        $charge = $selected ? (float)$selected['delivery_charge'] : $defaultCharge;
+        $areaName = $selected ? $selected['name'] : 'Jaora Delivery Area';
+        $selectedId = $selected ? (int)$selected['id'] : null;
 
         return [
             'deliverable' => true,
-            'area_id' => $areaId,
+            'area_id' => $selectedId,
             'area_name' => $areaName,
             'delivery_charge' => $charge,
-            'message' => 'Delivery available at standard doorstep rate.'
+            'message' => 'Delivery available in ' . $areaName . '!'
         ];
+    }
+
+    /**
+     * Strict Jaora-Only Address and Location Verification
+     * Validates that home delivery is strictly inside Jaora, Madhya Pradesh (PIN 457226).
+     *
+     * @param string $address
+     * @param float|null $lat
+     * @param float|null $lng
+     * @return array{valid: bool, error: ?string}
+     */
+    public static function validateJaoraDelivery(string $address, ?float $lat, ?float $lng): array {
+        $restrictedMsg = 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.';
+
+        // 1. PIN code check in written address: if 6-digit PIN code is present and != 457226, reject
+        if (preg_match('/\b([1-9][0-9]{5})\b/', $address, $pinMatches)) {
+            $pin = $pinMatches[1];
+            if ($pin !== '457226') {
+                return ['valid' => false, 'error' => $restrictedMsg];
+            }
+        }
+
+        // 2. Coordinates spatial point-in-polygon check
+        if ($lat !== null && $lng !== null && $lat != 0 && $lng != 0) {
+            $matched = self::findAreaForCoordinates($lat, $lng);
+            if (!$matched) {
+                return ['valid' => false, 'error' => $restrictedMsg];
+            }
+            return ['valid' => true, 'error' => null, 'area' => $matched];
+        }
+
+        // 3. If no coordinates were supplied, verify address mentions Jaora
+        if (stripos($address, 'Jaora') === false && stripos($address, '457226') === false) {
+            return ['valid' => false, 'error' => $restrictedMsg];
+        }
+
+        return ['valid' => true, 'error' => null];
     }
 }

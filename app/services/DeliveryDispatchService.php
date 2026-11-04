@@ -9,14 +9,30 @@
  */
 
 class DeliveryDispatchService {
-    // Default store coordinates (N.A Fresh Fruits & Coconuts, Jaora)
-    public const STORE_LAT = 23.8920;
-    public const STORE_LNG = 75.1320;
+    // Verified fixed shop coordinates (N.A Fresh Fruits & Coconuts, Jaora)
+    public const STORE_LAT = 23.635784;
+    public const STORE_LNG = 75.124683;
     public const STORE_NAME = 'N.A Fresh Fruits & Coconuts - Main Store';
     public const STORE_ADDRESS = 'Station Road, Opp. Municipal Market, Jaora, MP 457226';
 
     // Escalation timeout in seconds (5 minutes)
     public const ESCALATION_TIMEOUT_SECONDS = 300;
+
+    public static function getStoreLat(): float {
+        return (float)Setting::get('store_latitude', (string)self::STORE_LAT);
+    }
+
+    public static function getStoreLng(): float {
+        return (float)Setting::get('store_longitude', (string)self::STORE_LNG);
+    }
+
+    public static function getStoreAddress(): string {
+        return Setting::get('store_address', self::STORE_ADDRESS);
+    }
+
+    public static function getGoogleMapsApiKey(): string {
+        return Setting::get('google_maps_api_key', 'AIzaSyABvsHD8lil-4uRWC5lUT_qIQgGMpV0wGk');
+    }
 
     /**
      * Get available incoming orders ready for a specific rider to accept.
@@ -83,6 +99,11 @@ class DeliveryDispatchService {
      * that no two delivery boys can accept the same order simultaneously.
      */
     public static function acceptOrderAtomic(int $orderId, int $riderId): array {
+        $rider = DeliveryBoy::getById($riderId);
+        if (!$rider || $rider['status'] !== 'active') {
+            return ['success' => false, 'error' => 'Your delivery partner account is inactive or not found. Please contact store management.'];
+        }
+
         $pdo = Database::getConnection();
 
         try {
@@ -148,6 +169,8 @@ class DeliveryDispatchService {
             return [
                 'success' => true,
                 'message' => 'Order #' . $order['order_number'] . ' successfully accepted!',
+                'order_id' => $orderId,
+                'redirect_url' => '/delivery/order?id=' . $orderId,
                 'order' => $order
             ];
 

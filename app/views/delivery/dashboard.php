@@ -47,14 +47,9 @@
     <main class="max-w-lg mx-auto px-4 py-4 space-y-4">
 
         <!-- Flash messages -->
-        <?php if ($msg = get_flash('success')): ?>
-            <div class="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-2xl text-emerald-200 text-xs">
-                <?= e($msg) ?>
-            </div>
-        <?php endif; ?>
-        <?php if ($msg = get_flash('error')): ?>
-            <div class="p-3 bg-red-950/80 border border-red-500/50 rounded-2xl text-red-200 text-xs">
-                <?= e($msg) ?>
+        <?php $flash = get_flash(); if ($flash): ?>
+            <div class="p-3 <?= ($flash['type'] ?? '') === 'error' ? 'bg-red-950/80 border-red-500/50 text-red-200' : 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200' ?> border rounded-2xl text-xs">
+                <?= e($flash['message'] ?? '') ?>
             </div>
         <?php endif; ?>
 
@@ -333,11 +328,11 @@
                             'Content-Type': 'application/json',
                             'X-CSRF-TOKEN': csrf
                         },
-                        body: JSON.stringify({ order_id: orderId })
+                        body: JSON.stringify({ order_id: orderId, csrf_token: csrf })
                     });
                     const data = await res.json();
                     if (data.success) {
-                        window.location.href = '/delivery/order?id=' + orderId;
+                        window.location.href = data.redirect_url || ('/delivery/order?id=' + orderId);
                     } else {
                         alert(data.error || 'Failed to accept order.');
                         this.fetchAvailableOrders();
