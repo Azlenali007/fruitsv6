@@ -114,7 +114,33 @@ if ($order) {
             </div>
         </div>
 
-        <!-- BLINKIT-STYLE CUSTOMER DELIVERY OTP BANNER -->
+        <!-- ORDER COMPLETED & DELIVERED BANNER -->
+        <template x-if="workflowStatus === 'delivered'">
+            <div class="bg-gradient-to-r from-emerald-600 via-green-600 to-teal-700 text-white rounded-3xl p-6 sm:p-7 shadow-xl space-y-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-2xl font-black">
+                        ✅
+                    </div>
+                    <div>
+                        <span class="px-2.5 py-0.5 rounded-full bg-white/20 text-[10px] font-black uppercase tracking-wider border border-white/30">
+                            Order Completed & Delivered
+                        </span>
+                        <h3 class="text-lg sm:text-xl font-black mt-1">Delivery Successfully Completed</h3>
+                        <p class="text-xs text-emerald-100">Your fresh harvest was handed over and verified via OTP. Thank you for choosing N.A Fresh Fruits & Coconuts!</p>
+                    </div>
+                </div>
+                <div class="pt-3 border-t border-white/20 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <span class="text-xs text-emerald-100">Order workflow closed • Tax invoice ready</span>
+                    <a href="/account/orders/invoice/download?num=<?= urlencode($order['order_number']) ?>&h=<?= urlencode($order['tracking_hash']) ?>"
+                       class="w-full sm:w-auto px-6 py-3 bg-white text-emerald-950 font-black text-xs rounded-2xl shadow-lg hover:bg-emerald-50 active:scale-95 transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4 text-emerald-700" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        <span>Download Tax Invoice (PDF)</span>
+                    </a>
+                </div>
+            </div>
+        </template>
+
+        <!-- BLINKIT-STYLE CUSTOMER DELIVERY OTP BANNER (Only when out for delivery / picked up) -->
         <template x-if="workflowStatus === 'out_for_delivery' || workflowStatus === 'picked_up'">
             <div class="bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-3xl p-5 shadow-lg relative overflow-hidden">
                 <div class="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
@@ -131,9 +157,9 @@ if ($order) {
             </div>
         </template>
 
-        <!-- LIVE GPS DELIVERY MAP (For Home Deliveries) -->
+        <!-- LIVE GPS DELIVERY MAP (For Home Deliveries when order is active) -->
         <?php if ($order['fulfilment_method'] === 'delivery'): ?>
-        <div class="bg-white rounded-3xl p-4 sm:p-5 border border-gray-100 shadow-sm space-y-3">
+        <div x-show="workflowStatus !== 'delivered' && workflowStatus !== 'cancelled'" class="bg-white rounded-3xl p-4 sm:p-5 border border-gray-100 shadow-sm space-y-3">
             <div class="flex items-center justify-between">
                 <div>
                     <h3 class="text-sm font-extrabold text-gray-900 flex items-center gap-1.5">
@@ -147,7 +173,7 @@ if ($order) {
                 </div>
             </div>
 
-            <!-- Leaflet Map Container -->
+            <!-- Leaflet/Google Map Container -->
             <div id="customerLiveMap" class="w-full h-56 sm:h-64 rounded-2xl border border-gray-200 bg-gray-50 shadow-inner"></div>
 
             <div class="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-1">

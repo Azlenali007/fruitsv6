@@ -696,6 +696,8 @@ try {
             break;
 
         case '/account':
+        case '/user':
+        case '/user/account':
             CustomerAuthService::requireLogin('/account');
             require __DIR__ . '/../app/views/customer/account.php';
             break;
@@ -728,6 +730,7 @@ try {
             break;
 
         case '/my-orders':
+        case '/user/orders':
             CustomerAuthService::requireLogin('/my-orders');
             require __DIR__ . '/../app/views/customer/my-orders.php';
             break;
@@ -766,6 +769,8 @@ try {
             exit;
             break;
 
+        case '/invoice/download':
+        case '/invoice/pdf':
         case '/account/orders/invoice/download':
             $orderId = (int)($_GET['order_id'] ?? ($_GET['id'] ?? 0));
             $order = $orderId > 0 ? Order::getById($orderId) : null;
@@ -1081,6 +1086,7 @@ try {
             break;
 
         case '/api/delivery/generate-qr':
+        case '/api/delivery/create-dynamic-qr':
             if (!DeliveryBoyAuthService::check()) {
                 json_response(['success' => false, 'error' => 'Authentication required'], 401);
             }
@@ -1096,6 +1102,10 @@ try {
                 if (!$order) {
                     json_response(['success' => false, 'error' => 'Order not found'], 404);
                 }
+                $riderId = DeliveryBoyAuthService::riderId();
+                if ((int)$order['delivery_boy_id'] !== $riderId) {
+                    json_response(['success' => false, 'error' => 'Unauthorized for this order'], 403);
+                }
                 $res = RazorpayService::createDynamicQr((float)$order['total_amount'], $order['order_number'], $orderId);
                 json_response($res, $res['success'] ? 200 : 400);
             }
@@ -1103,12 +1113,22 @@ try {
             break;
 
         case '/api/delivery/check-qr':
+        case '/api/delivery/check-qr-status':
             if (!DeliveryBoyAuthService::check()) {
                 json_response(['success' => false, 'error' => 'Authentication required'], 401);
             }
             $qrId = trim($_GET['qr_id'] ?? '');
             $orderId = (int)($_GET['order_id'] ?? 0);
+            if (empty($qrId) && $orderId > 0) {
+                $pdo = Database::getConnection();
+                $stmt = $pdo->prepare("SELECT razorpay_qr_id FROM delivery_dynamic_qrs WHERE order_id = ? ORDER BY id DESC LIMIT 1");
+                $stmt->execute([$orderId]);
+                $qrId = $stmt->fetchColumn() ?: '';
+            }
             $res = RazorpayService::checkDynamicQrPayment($qrId, $orderId);
+            if (isset($res['is_paid']) && !isset($res['paid'])) {
+                $res['paid'] = (bool)$res['is_paid'];
+            }
             json_response($res);
             break;
 

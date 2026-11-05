@@ -170,14 +170,14 @@
                             </button>
 
                             <button type="button"
-                                    @click="acceptOrder(order.id)"
-                                    :disabled="order._accepting"
-                                    class="py-2.5 px-3 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-500/25 transition flex items-center justify-center gap-1.5">
-                                <span x-show="!order._accepting" class="flex items-center gap-1.5">
+                                    @click.prevent.stop="acceptOrder(order.id)"
+                                    :disabled="acceptingOrderId !== null"
+                                    class="py-2.5 px-3 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-500/25 transition flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span x-show="acceptingOrderId !== order.id" class="flex items-center gap-1.5">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
                                     <span>Accept Delivery</span>
                                 </span>
-                                <span x-show="order._accepting" class="flex items-center gap-1">
+                                <span x-show="acceptingOrderId === order.id" class="flex items-center gap-1.5">
                                     <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                     <span>Locking...</span>
                                 </span>
@@ -219,6 +219,7 @@
         return {
             isOnline: <?= $rider['is_online'] ? 'true' : 'false' ?>,
             togglingOnline: false,
+            acceptingOrderId: null,
             availableOrders: <?= json_encode($availableOrders) ?>,
             knownOrderIds: new Set(<?= json_encode(array_column($availableOrders, 'id')) ?>),
             pollTimer: null,
@@ -317,8 +318,10 @@
             },
 
             async acceptOrder(orderId) {
-                const target = this.availableOrders.find(o => o.id === orderId);
-                if (target) target._accepting = true;
+                if (this.acceptingOrderId !== null) return;
+                this.acceptingOrderId = orderId;
+                // Temporarily pause polling counter while accepting
+                this.pollCounter = 20;
 
                 try {
                     const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
@@ -326,7 +329,8 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': csrf
+                            'X-CSRF-TOKEN': csrf,
+                            'X-Requested-With': 'XMLHttpRequest'
                         },
                         body: JSON.stringify({ order_id: orderId, csrf_token: csrf })
                     });
@@ -334,13 +338,13 @@
                     if (data.success) {
                         window.location.href = data.redirect_url || ('/delivery/order?id=' + orderId);
                     } else {
-                        alert(data.error || 'Failed to accept order.');
-                        this.fetchAvailableOrders();
+                        alert(data.error || 'This order could not be accepted or was already claimed.');
+                        await this.fetchAvailableOrders();
                     }
                 } catch (e) {
-                    alert('Network error accepting order.');
+                    alert('Network error accepting order. Please check your internet connection.');
                 } finally {
-                    if (target) target._accepting = false;
+                    this.acceptingOrderId = null;
                 }
             },
 

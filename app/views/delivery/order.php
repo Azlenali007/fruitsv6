@@ -685,10 +685,11 @@
                         this.qrId = data.qr_id || '';
                         this.startQrPolling();
                     } else {
-                        this.qrError = data.error || 'Could not generate dynamic QR. Please collect Cash.';
+                        const reason = data.error || (data.requires_merchant_activation ? data.help_text : 'Could not generate dynamic QR.');
+                        this.qrError = reason + ' Please collect Cash from customer.';
                     }
                 } catch(e) {
-                    this.qrError = 'Network error requesting UPI QR.';
+                    this.qrError = 'Network error requesting UPI QR. Please collect Cash.';
                 } finally {
                     this.processingPayment = false;
                 }
@@ -698,9 +699,10 @@
                 this.qrChecking = true;
                 const interval = setInterval(async () => {
                     try {
-                        const res = await fetch('/api/delivery/check-qr-status?order_id=' + this.orderId);
+                        const url = '/api/delivery/check-qr-status?order_id=' + this.orderId + '&qr_id=' + encodeURIComponent(this.qrId);
+                        const res = await fetch(url);
                         const data = await res.json();
-                        if (data.paid) {
+                        if (data.paid || data.is_paid) {
                             clearInterval(interval);
                             alert('UPI Payment Verified successfully!');
                             window.location.reload();

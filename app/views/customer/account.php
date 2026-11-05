@@ -16,7 +16,8 @@ foreach ($orders as $o) {
     if ($o['order_status'] !== 'cancelled') {
         $totalSpent += (float)$o['total_amount'];
     }
-
+}
+?>
 
 <div class="max-w-4xl mx-auto px-4 py-8 sm:py-10 space-y-8">
     <!-- Top Welcome Card -->
@@ -204,15 +205,23 @@ foreach ($orders as $o) {
 
                     <!-- Item summary -->
                     <div class="bg-gray-50 rounded-xl p-2.5 text-xs text-gray-600 flex justify-between items-center">
-                        <span>
+                        <span class="truncate pr-2">
                             <?php foreach ($order['items'] as $it): ?>
                                 <?= e($it['product_name']) ?> &times; <?= (int)$it['quantity'] ?>
                             <?php endforeach; ?>
                         </span>
-                        <a href="/track?h=<?= urlencode($order['tracking_hash']) ?>" class="text-brand-600 hover:text-brand-700 font-bold text-[11px] inline-flex items-center gap-1">
-                            <span>Track</span>
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
-                        </a>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <?php if ($order['order_status'] === 'delivered'): ?>
+                            <a href="/account/orders/invoice/download?num=<?= urlencode($order['order_number']) ?>&h=<?= urlencode($order['tracking_hash']) ?>" class="text-emerald-700 hover:text-emerald-800 font-bold text-[11px] inline-flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                <span>Invoice</span>
+                            </a>
+                            <?php endif; ?>
+                            <a href="/track?h=<?= urlencode($order['tracking_hash']) ?>" class="text-brand-600 hover:text-brand-700 font-bold text-[11px] inline-flex items-center gap-0.5">
+                                <span><?= $order['order_status'] === 'delivered' ? 'Details' : 'Track' ?></span>
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg>
+                            </a>
+                        </div>
                     </div>
                 </div>
                 <?php endforeach; ?>
