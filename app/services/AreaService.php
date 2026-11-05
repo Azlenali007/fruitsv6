@@ -8,6 +8,31 @@
 
 class AreaService {
     /**
+     * Verified Jaora Delivery Zone Polygon Boundary Coordinates (Jaora, MP - 457226)
+     * Vertices enclosing Jaora municipal area and shop location (23.635784, 75.124683)
+     */
+    public const DEFAULT_JAORA_BOUNDARY = [
+        ['lat' => 23.6300, 'lng' => 75.1050],
+        ['lat' => 23.6500, 'lng' => 75.1100],
+        ['lat' => 23.6580, 'lng' => 75.1250],
+        ['lat' => 23.6550, 'lng' => 75.1400],
+        ['lat' => 23.6420, 'lng' => 75.1480],
+        ['lat' => 23.6220, 'lng' => 75.1450],
+        ['lat' => 23.6120, 'lng' => 75.1320],
+        ['lat' => 23.6150, 'lng' => 75.1150],
+        ['lat' => 23.6300, 'lng' => 75.1050]
+    ];
+
+    /**
+     * Get Jaora boundary points
+     *
+     * @return array<array{lat: float, lng: float}>
+     */
+    public static function getJaoraBoundary(): array {
+        return self::DEFAULT_JAORA_BOUNDARY;
+    }
+
+    /**
      * Parse stored boundary GeoJSON or JSON points into normalized array of [lat, lng] points
      *
      * @param string|null $rawJson
@@ -168,6 +193,17 @@ class AreaService {
         }
 
         if (empty($matches)) {
+            // Check verified Jaora municipal polygon boundary
+            if (self::isPointInPolygon($lat, $lng, self::DEFAULT_JAORA_BOUNDARY)) {
+                $charge = (float)Setting::get('delivery_charge', '40.00');
+                return [
+                    'id' => 1,
+                    'name' => 'Jaora City (PIN 457226)',
+                    'slug' => 'jaora-city',
+                    'delivery_charge' => $charge,
+                    'status' => 'active'
+                ];
+            }
             return null;
         }
 
@@ -220,7 +256,7 @@ class AreaService {
                     'area_id' => null,
                     'area_name' => null,
                     'delivery_charge' => $defaultCharge,
-                    'message' => 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.'
+                    'message' => 'Sorry, delivery is not available. Currently we deliver only within Jaora, Madhya Pradesh - 457226.'
                 ];
             }
         }

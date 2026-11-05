@@ -275,8 +275,8 @@ $checkoutPost = [
     'delivery_area_name' => $areaName,
     'payment_method' => 'online',
     'fulfilment_method' => 'delivery',
-    'latitude' => 23.892,
-    'longitude' => 75.132,
+    'latitude' => 23.635784,
+    'longitude' => 75.124683,
     'idempotency_key' => 'idemp_' . bin2hex(random_bytes(8))
 ];
 

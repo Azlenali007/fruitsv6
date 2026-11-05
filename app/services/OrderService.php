@@ -111,7 +111,15 @@ class OrderService {
         }
 
         $fulfilment = trim($postData['fulfilment_method'] ?? 'delivery');
-        if ($fulfilment !== 'pickup') {
+        $shopPickupEnabled = (Setting::get('shop_pickup_enabled', '0') === '1');
+        if ($fulfilment === 'pickup') {
+            if (!$shopPickupEnabled) {
+                return [
+                    'success' => false,
+                    'error' => 'Shop pickup is no longer available. All orders are delivered directly to your doorstep.'
+                ];
+            }
+        } else {
             $fulfilment = 'delivery';
         }
         $address = trim($postData['delivery_address'] ?? '');

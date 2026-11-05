@@ -124,10 +124,14 @@ class Order {
 
             // 3. Validate fulfilment method & payment method
             $fulfilment = $orderData['fulfilment_method'] ?? 'delivery';
+            $shopPickupEnabled = (Setting::get('shop_pickup_enabled', '0') === '1');
             if ($fulfilment === 'pickup') {
-                throw new Exception("Shop pickup is no longer available. All orders are delivered directly to your doorstep.");
+                if (!$shopPickupEnabled) {
+                    throw new Exception("Shop pickup is no longer available. All orders are delivered directly to your doorstep.");
+                }
+            } else {
+                $fulfilment = 'delivery';
             }
-            $fulfilment = 'delivery';
 
             $paymentMethod = $orderData['payment_method'] ?? 'cod';
             if ($paymentMethod === 'cod' && !RazorpayService::isCodEnabled()) {

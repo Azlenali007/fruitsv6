@@ -118,14 +118,25 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                     customerAddress: config.customerAddress || '',
                     customerLandmark: config.customerLandmark || '',
 
-                    // Delivery Area State
-                    latitude: null,
-                    longitude: null,
+                    fulfilmentMethod: config.fulfilmentMethod || 'delivery',
+                    shopPickupEnabled: Boolean(config.shopPickupEnabled),
+                    storeLat: parseFloat(config.storeLat) || 23.635784,
+                    storeLng: parseFloat(config.storeLng) || 75.124683,
+                    storeAddress: config.storeAddress || 'Station Road, Opp. Municipal Market, Jaora, Madhya Pradesh - 457226',
+
+                    // Delivery Area & Map State
+                    latitude: 23.635784,
+                    longitude: 75.124683,
                     selectedAreaId: config.selectedAreaId || '',
-                    deliveryAreaName: config.deliveryAreaName || '',
-                    deliveryAvailable: config.deliveryAvailable !== false,
-                    locationStatusText: '',
+                    deliveryAreaName: config.deliveryAreaName || 'Jaora City (PIN 457226)',
+                    deliveryAvailable: true,
+                    locationStatusText: '📍 Delivery location confirmed within Jaora (PIN 457226)',
                     checkingLocation: false,
+                    isLocatingGps: false,
+                    mapInitialized: false,
+                    mapInstance: null,
+                    pinMarker: null,
+                    jaoraPolygon: null,
 
                     // Pricing
                     subtotal: parseFloat(config.subtotal) || 0,
@@ -136,8 +147,153 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                     couponType: config.couponType || '',
                     couponCode: config.couponCode || '',
 
+                    init() {
+                        this.$nextTick(() => {
+                            if (this.fulfilmentMethod === 'delivery') {
+                                this.initMapPicker();
+                            }
+                        });
+                    },
+
+                    setFulfilment(method) {
+                        this.fulfilmentMethod = method;
+                        if (method === 'pickup') {
+                            this.deliveryAvailable = true;
+                            this.locationStatusText = '🏬 Pick up directly from our store counter (₹0 Delivery Fee)';
+                        } else {
+                            this.deliveryAvailable = true;
+                            this.$nextTick(() => {
+                                this.initMapPicker();
+                            });
+                        }
+                    },
+
+                    initMapPicker() {
+                        const mapEl = document.getElementById('checkoutMapPicker');
+                        if (!mapEl || typeof google === 'undefined' || !google.maps) return;
+
+                        if (this.mapInstance) {
+                            google.maps.event.trigger(this.mapInstance, 'resize');
+                            return;
+                        }
+
+                        const centerCoords = { lat: this.latitude || this.storeLat, lng: this.longitude || this.storeLng };
+
+                        this.mapInstance = new google.maps.Map(mapEl, {
+                            center: centerCoords,
+                            zoom: 14,
+                            mapTypeControl: false,
+                            streetViewControl: false,
+                            fullscreenControl: true,
+                            styles: [
+                                { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }
+                            ]
+                        });
+
+                        // Draw verified Jaora delivery boundary
+                        const boundaryCoords = (config.jaoraBoundary || []).map(p => ({ lat: p.lat, lng: p.lng }));
+                        if (boundaryCoords.length >= 3) {
+                            this.jaoraPolygon = new google.maps.Polygon({
+                                paths: boundaryCoords,
+                                strokeColor: '#059669',
+                                strokeOpacity: 0.85,
+                                strokeWeight: 2.5,
+                                fillColor: '#10b981',
+                                fillOpacity: 0.12,
+                                map: this.mapInstance
+                            });
+                        }
+
+                        // Add Store HQ Fixed Marker
+                        new google.maps.Marker({
+                            position: { lat: this.storeLat, lng: this.storeLng },
+                            map: this.mapInstance,
+                            title: 'N.A Fresh Fruits & Coconuts (Store HQ)',
+                            label: { text: '🏬', fontSize: '18px' }
+                        });
+
+                        // Add Draggable Customer Pin Marker
+                        this.pinMarker = new google.maps.Marker({
+                            position: centerCoords,
+                            map: this.mapInstance,
+                            draggable: true,
+                            title: 'Your Delivery Location (Drag to adjust)',
+                            animation: google.maps.Animation.DROP
+                        });
+
+                        // Validate initial position
+                        this.validatePinLocation(centerCoords.lat, centerCoords.lng);
+
+                        // Listen to pin drag
+                        this.pinMarker.addListener('dragend', (evt) => {
+                            const lat = evt.latLng.lat();
+                            const lng = evt.latLng.lng();
+                            this.validatePinLocation(lat, lng);
+                        });
+
+                        // Listen to map click to place pin
+                        this.mapInstance.addListener('click', (evt) => {
+                            const lat = evt.latLng.lat();
+                            const lng = evt.latLng.lng();
+                            this.pinMarker.setPosition(evt.latLng);
+                            this.validatePinLocation(lat, lng);
+                        });
+
+                        this.mapInitialized = true;
+                    },
+
+                    validatePinLocation(lat, lng) {
+                        this.latitude = parseFloat(lat.toFixed(6));
+                        this.longitude = parseFloat(lng.toFixed(6));
+
+                        let inside = true;
+                        if (this.jaoraPolygon && typeof google.maps.geometry !== 'undefined' && google.maps.geometry.poly) {
+                            const pt = new google.maps.LatLng(lat, lng);
+                            inside = google.maps.geometry.poly.containsLocation(pt, this.jaoraPolygon);
+                        }
+
+                        if (!inside) {
+                            this.deliveryAvailable = false;
+                            this.locationStatusText = 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.';
+                        } else {
+                            this.deliveryAvailable = true;
+                            this.locationStatusText = '📍 Delivery location confirmed within Jaora (PIN 457226)';
+                        }
+                    },
+
+                    locateCurrentGps() {
+                        if (!navigator.geolocation) {
+                            alert('Geolocation is not supported by your browser.');
+                            return;
+                        }
+                        this.isLocatingGps = true;
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => {
+                                this.isLocatingGps = false;
+                                const lat = pos.coords.latitude;
+                                const lng = pos.coords.longitude;
+                                const latLng = new google.maps.LatLng(lat, lng);
+
+                                if (this.pinMarker) {
+                                    this.pinMarker.setPosition(latLng);
+                                }
+                                if (this.mapInstance) {
+                                    this.mapInstance.panTo(latLng);
+                                    this.mapInstance.setZoom(16);
+                                }
+                                this.validatePinLocation(lat, lng);
+                            },
+                            (err) => {
+                                this.isLocatingGps = false;
+                                alert('Could not retrieve your GPS location. Please drag the pin on the map to set your address.');
+                            },
+                            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                        );
+                    },
+
                     // Reactive Pricing Getters
                     get effectiveDeliveryFee() {
+                        if (this.fulfilmentMethod === 'pickup') return 0;
                         if (this.subtotal > this.freeDeliveryAbove || this.subtotal === this.freeDeliveryAbove) return 0;
                         if (this.couponType === 'free_delivery') return 0;
                         return Math.max(0, this.defaultDeliveryFee - this.deliveryDiscount);
@@ -165,7 +321,7 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                         return this.defaultDeliveryFee > 0;
                     },
                     get submitButtonText() {
-                        if (!this.deliveryAvailable) {
+                        if (this.fulfilmentMethod === 'delivery' && !this.deliveryAvailable) {
                             return 'Delivery Not Available At Your Location';
                         }
                         if (this.isProcessing) {
@@ -174,7 +330,7 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                         if (this.paymentMethod === 'online') {
                             return 'Proceed to Razorpay Payment';
                         }
-                        return 'Place Order';
+                        return this.fulfilmentMethod === 'pickup' ? 'Confirm Store Self-Pickup Order' : 'Place Order';
                     },
 
                     // Verify locality with server API
@@ -182,8 +338,8 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                         if (!areaId) {
                             this.deliveryAvailable = true;
                             this.defaultDeliveryFee = parseFloat(config.defaultDeliveryFee) || 0;
-                            this.deliveryAreaName = '';
-                            this.locationStatusText = '';
+                            this.deliveryAreaName = 'Jaora City (PIN 457226)';
+                            this.locationStatusText = '📍 Delivery location confirmed within Jaora (PIN 457226)';
                             return;
                         }
                         this.checkingLocation = true;
@@ -209,7 +365,7 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                                     this.locationStatusText = data.message || 'Delivery available in your selected area!';
                                 } else {
                                     this.deliveryAreaName = '';
-                                    this.locationStatusText = data.message || 'Sorry, delivery is not active in this locality yet.';
+                                    this.locationStatusText = data.message || 'Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.';
                                 }
                             }
                         })
@@ -229,8 +385,8 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                         if (event) event.preventDefault();
                         if (this.isProcessing) return false;
 
-                        if (!this.deliveryAvailable) {
-                            alert('Sorry, delivery is not available at your current location. Please choose another delivery address or locality in Jaora.');
+                        if (this.fulfilmentMethod === 'delivery' && !this.deliveryAvailable) {
+                            alert('Sorry, currently we deliver only within Jaora, Madhya Pradesh - 457226.');
                             return false;
                         }
 
@@ -451,7 +607,7 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
     <form id="checkoutOrderForm" action="/checkout/place" method="POST" data-no-loader @submit="handleCheckoutSubmit($event)" class="space-y-6">
         <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
         <input type="hidden" name="idempotency_key" value="<?= $idempotencyKey ?>">
-        <input type="hidden" name="fulfilment_method" value="delivery">
+        <input type="hidden" name="fulfilment_method" :value="fulfilmentMethod">
 
         <!-- Hidden inputs for coordinates and matched delivery area -->
         <input type="hidden" name="latitude" :value="latitude">
@@ -459,15 +615,70 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
         <input type="hidden" name="delivery_area_id" :value="selectedAreaId">
         <input type="hidden" name="delivery_area_name" :value="deliveryAreaName">
 
-        <!-- SECTION 1: Delivery Address & Location Selection -->
-        <div class="space-y-3">
+        <!-- FULFILMENT METHOD TOGGLE (Home Delivery vs Store Pickup) -->
+        <div class="space-y-2">
+            <span class="text-xs font-bold text-gray-800 uppercase tracking-wide">Fulfilment Method</span>
+            <div class="grid grid-cols-2 gap-2.5">
+                <!-- Delivery Tab -->
+                <button 
+                    type="button" 
+                    @click="setFulfilment('delivery')"
+                    class="p-3 rounded-2xl border text-left transition cursor-pointer flex items-center gap-2.5"
+                    :class="fulfilmentMethod === 'delivery' ? 'bg-emerald-50/70 border-brand-600 ring-2 ring-brand-600 shadow-xs' : 'bg-white border-gray-200 hover:border-gray-300'"
+                >
+                    <span class="text-xl shrink-0">🛵</span>
+                    <div>
+                        <p class="font-bold text-xs text-gray-900 leading-tight">Doorstep Delivery</p>
+                        <p class="text-[10px] text-gray-500 mt-0.5">Jaora Town (PIN 457226)</p>
+                    </div>
+                </button>
+
+                <!-- Pickup Tab -->
+                <button 
+                    type="button" 
+                    @click="setFulfilment('pickup')"
+                    class="p-3 rounded-2xl border text-left transition cursor-pointer flex items-center gap-2.5"
+                    :class="fulfilmentMethod === 'pickup' ? 'bg-emerald-50/70 border-brand-600 ring-2 ring-brand-600 shadow-xs' : 'bg-white border-gray-200 hover:border-gray-300'"
+                >
+                    <span class="text-xl shrink-0">🏬</span>
+                    <div>
+                        <p class="font-bold text-xs text-gray-900 leading-tight">Store Self-Pickup</p>
+                        <p class="text-[10px] text-emerald-700 font-bold mt-0.5">FREE (₹0 Delivery Fee)</p>
+                    </div>
+                </button>
+            </div>
+        </div>
+
+        <!-- STORE PICKUP INFO CARD (When Store Pickup is selected) -->
+        <div x-show="fulfilmentMethod === 'pickup'" x-cloak class="bg-white rounded-2xl p-4 border border-emerald-200 shadow-xs space-y-3">
+            <div class="flex items-start gap-3">
+                <span class="text-2xl shrink-0 mt-0.5">🏬</span>
+                <div class="space-y-1">
+                    <p class="font-bold text-xs text-emerald-900 uppercase tracking-wide">Store Counter Pickup Location</p>
+                    <p class="font-extrabold text-sm text-gray-900">N.A Fresh Fruits & Coconuts</p>
+                    <p class="text-xs text-gray-600 leading-relaxed">
+                        <?= e(Setting::get('store_address', 'Station Road, Opp. Municipal Market, Jaora, Madhya Pradesh - 457226')) ?>
+                    </p>
+                    <div class="flex items-center gap-2 pt-1 text-[11px] text-gray-500">
+                        <span>⏰ 08:00 AM - 09:30 PM</span>
+                        <span>•</span>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=23.635784,75.124683" target="_blank" class="text-brand-600 font-bold hover:underline">
+                            Open in Google Maps &rarr;
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 1: Delivery Address & Google Maps Pin Location (When Home Delivery selected) -->
+        <div x-show="fulfilmentMethod === 'delivery'" class="space-y-3">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2 text-sm font-bold text-gray-800">
                     <svg class="w-4 h-4 text-brand-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                     </svg>
-                    <span>Delivery Address & Location</span>
+                    <span>Delivery Address & Exact Google Map Pin</span>
                 </div>
 
                 <!-- Matched Area Pill Badge -->
@@ -475,6 +686,41 @@ window.__CHECKOUT_CONFIG__ = <?= json_encode($checkoutConfig, JSON_UNESCAPED_UNI
                     <span class="text-[10px] bg-emerald-50 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-200">
                         📍 <span x-text="deliveryAreaName"></span>
                     </span>
+                </div>
+            </div>
+
+            <!-- Interactive Google Maps Pin Picker Container -->
+            <div class="bg-white rounded-2xl p-3 border border-gray-200/90 shadow-xs space-y-2">
+                <div class="flex items-center justify-between text-xs">
+                    <span class="font-bold text-gray-700 flex items-center gap-1.5">
+                        <span>📍 Exact Map Pin Drop</span>
+                        <span class="text-[10px] text-gray-400 font-normal">(Drag pin or tap map)</span>
+                    </span>
+                    <button 
+                        type="button" 
+                        @click="locateCurrentGps()" 
+                        :disabled="isLocatingGps"
+                        class="text-[11px] font-bold text-brand-700 bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-lg border border-brand-200 flex items-center gap-1 transition cursor-pointer disabled:opacity-60"
+                    >
+                        <svg x-show="isLocatingGps" class="animate-spin w-3 h-3 text-brand-700" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                        <span>🧭 GPS Current Location</span>
+                    </button>
+                </div>
+
+                <!-- Google Map Canvas Element -->
+                <div id="checkoutMapPicker" class="w-full h-52 sm:h-60 rounded-xl overflow-hidden border border-gray-200 relative bg-gray-100">
+                    <div class="absolute inset-0 flex items-center justify-center text-xs text-gray-400">
+                        Loading Google Maps...
+                    </div>
+                </div>
+
+                <!-- Live Boundary / Locality Status Pill -->
+                <div 
+                    class="p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-2 transition"
+                    :class="deliveryAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'"
+                >
+                    <span x-text="deliveryAvailable ? '📍' : '⚠️'"></span>
+                    <span x-text="locationStatusText"></span>
                 </div>
             </div>
 

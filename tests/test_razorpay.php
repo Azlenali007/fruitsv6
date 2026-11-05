@@ -124,8 +124,11 @@ $checkoutPost = [
     CSRF_TOKEN_KEY => csrf_token(),
     'customer_name' => 'Razorpay Test Customer',
     'customer_phone' => $testCustomerPhone,
-    'fulfilment_method' => 'delivery',
-    'delivery_address' => 'Test Address, Green Park, Bhopal',
+    'delivery_address' => 'Test Address, Station Road, Jaora, Madhya Pradesh - 457226',
+    'delivery_city' => 'Jaora',
+    'delivery_pincode' => '457226',
+    'latitude' => 23.635784,
+    'longitude' => 75.124683,
     'payment_method' => 'online',
     'idempotency_key' => 'idem_rzp_' . uniqid()
 ];
@@ -280,7 +283,11 @@ $codCheckoutPost = [
     'customer_name' => 'COD Tester',
     'customer_phone' => '9888877777',
     'fulfilment_method' => 'delivery',
-    'delivery_address' => 'COD Test Street, Bhopal',
+    'delivery_address' => 'COD Test Street, Station Road, Jaora, Madhya Pradesh - 457226',
+    'delivery_city' => 'Jaora',
+    'delivery_pincode' => '457226',
+    'latitude' => 23.635784,
+    'longitude' => 75.124683,
     'payment_method' => 'cod',
     'idempotency_key' => 'idem_cod_' . uniqid()
 ];

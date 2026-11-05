@@ -23,17 +23,16 @@ if ($order) {
 }
 ?>
 
-<!-- Include Leaflet CSS & JS for Live Blinkit Tracking Map -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<!-- Google Maps Platform JavaScript API with Geometry Library -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABvsHD8lil-4uRWC5lUT_qIQgGMpV0wGk&libraries=geometry"></script>
 
 <div class="max-w-xl mx-auto px-4 py-6 sm:py-10" x-data="customerTracker(<?= htmlspecialchars(json_encode([
     'orderId' => $order ? (int)$order['id'] : null,
     'trackingHash' => $order['tracking_hash'] ?? '',
     'workflowStatus' => $order['delivery_workflow_status'] ?? 'unassigned',
     'fulfilmentMethod' => $order['fulfilment_method'] ?? 'delivery',
-    'customerLat' => !empty($order['latitude']) ? (float)$order['latitude'] : 23.8940,
-    'customerLng' => !empty($order['longitude']) ? (float)$order['longitude'] : 75.1350,
+    'customerLat' => !empty($order['latitude']) ? (float)$order['latitude'] : 23.635784,
+    'customerLng' => !empty($order['longitude']) ? (float)$order['longitude'] : 75.124683,
     'riderLat' => $rider && $rider['current_lat'] ? (float)$rider['current_lat'] : null,
     'riderLng' => $rider && $rider['current_lng'] ? (float)$rider['current_lng'] : null,
     'plainOtp' => $otpInfo['plain_otp_for_dev'] ?? null,
@@ -259,8 +258,8 @@ function customerTracker(initialData) {
         riderMarker: null,
         storeMarker: null,
         destMarker: null,
-        storeLat: 23.8920,
-        storeLng: 75.1320,
+        storeLat: 23.635784,
+        storeLng: 75.124683,
         etaText: '',
         pollTimer: null,
 
@@ -304,34 +303,55 @@ function customerTracker(initialData) {
 
         initCustomerMap() {
             const container = document.getElementById('customerLiveMap');
-            if (!container) return;
+            if (!container || typeof google === 'undefined' || !google.maps) return;
 
-            this.map = L.map('customerLiveMap', {
-                attributionControl: false,
+            const centerCoords = { lat: this.storeLat, lng: this.storeLng };
+
+            this.map = new google.maps.Map(container, {
+                center: centerCoords,
+                zoom: 14,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false,
                 zoomControl: false
-            }).setView([this.storeLat, this.storeLng], 14);
-
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19
-            }).addTo(this.map);
-
-            // Store Pin
-            const storeIcon = L.divIcon({
-                className: 'c-store-pin',
-                html: '<div style="background:#059669; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.4); font-size:14px;">🏬</div>',
-                iconSize: [28, 28],
-                iconAnchor: [14, 14]
             });
-            this.storeMarker = L.marker([this.storeLat, this.storeLng], { icon: storeIcon }).addTo(this.map);
+
+            // Draw Jaora boundary
+            const jaoraCoords = [
+                { lat: 23.6300, lng: 75.1050 },
+                { lat: 23.6500, lng: 75.1100 },
+                { lat: 23.6580, lng: 75.1250 },
+                { lat: 23.6550, lng: 75.1400 },
+                { lat: 23.6420, lng: 75.1480 },
+                { lat: 23.6220, lng: 75.1450 },
+                { lat: 23.6120, lng: 75.1320 },
+                { lat: 23.6150, lng: 75.1150 }
+            ];
+            new google.maps.Polygon({
+                paths: jaoraCoords,
+                strokeColor: '#059669',
+                strokeOpacity: 0.8,
+                strokeWeight: 2,
+                fillColor: '#10b981',
+                fillOpacity: 0.08,
+                map: this.map
+            });
+
+            // Store HQ Pin (Fixed location: 23.635784, 75.124683)
+            this.storeMarker = new google.maps.Marker({
+                position: { lat: this.storeLat, lng: this.storeLng },
+                map: this.map,
+                title: 'N.A Fresh Fruits & Coconuts (Store HQ)',
+                label: { text: '🏬', fontSize: '18px' }
+            });
 
             // Customer Destination Pin
-            const destIcon = L.divIcon({
-                className: 'c-dest-pin',
-                html: '<div style="background:#dc2626; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.4); font-size:14px;">📍</div>',
-                iconSize: [28, 28],
-                iconAnchor: [14, 14]
+            this.destMarker = new google.maps.Marker({
+                position: { lat: this.customerLat, lng: this.customerLng },
+                map: this.map,
+                title: 'Your Delivery Address',
+                label: { text: '📍', fontSize: '18px' }
             });
-            this.destMarker = L.marker([this.customerLat, this.customerLng], { icon: destIcon }).addTo(this.map);
 
             // Initial rider marker if available
             if (this.riderLat && this.riderLng) {
@@ -342,18 +362,18 @@ function customerTracker(initialData) {
         },
 
         updateRiderMarker(lat, lng) {
-            if (!this.map) return;
-            const riderIcon = L.divIcon({
-                className: 'c-rider-pin',
-                html: '<div style="background:#10b981; width:34px; height:34px; border-radius:50%; border:3px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 0 15px #10b981; font-size:18px;">🛵</div>',
-                iconSize: [34, 34],
-                iconAnchor: [17, 17]
-            });
+            if (!this.map || typeof google === 'undefined' || !google.maps) return;
+            const rPos = { lat: lat, lng: lng };
 
             if (this.riderMarker) {
-                this.riderMarker.setLatLng([lat, lng]);
+                this.riderMarker.setPosition(rPos);
             } else {
-                this.riderMarker = L.marker([lat, lng], { icon: riderIcon }).addTo(this.map);
+                this.riderMarker = new google.maps.Marker({
+                    position: rPos,
+                    map: this.map,
+                    title: 'Delivery Partner',
+                    label: { text: '🛵', fontSize: '20px' }
+                });
             }
 
             // Calculate ETA
@@ -371,11 +391,14 @@ function customerTracker(initialData) {
         },
 
         recenter() {
-            if (!this.map) return;
-            const markers = [this.storeMarker, this.destMarker];
-            if (this.riderMarker) markers.push(this.riderMarker);
-            const group = L.featureGroup(markers);
-            this.map.fitBounds(group.getBounds().pad(0.3));
+            if (!this.map || typeof google === 'undefined' || !google.maps) return;
+            const bounds = new google.maps.LatLngBounds();
+            bounds.extend({ lat: this.storeLat, lng: this.storeLng });
+            bounds.extend({ lat: this.customerLat, lng: this.customerLng });
+            if (this.riderMarker && this.riderMarker.getPosition()) {
+                bounds.extend(this.riderMarker.getPosition());
+            }
+            this.map.fitBounds(bounds);
         },
 
         startLivePolling() {

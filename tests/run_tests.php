@@ -207,6 +207,14 @@ require_once __DIR__ . '/test_delivery_boy_system.php';
 $passCount += $dbRiderPass;
 $failCount += $dbRiderFail;
 
+// ---------------------------------------------------------
+// 16. GOOGLE MAPS PLATFORM & JAORA RESTRICTION SUITE
+// ---------------------------------------------------------
+echo "\n";
+require_once __DIR__ . '/test_delivery_and_maps.php';
+$passCount += $mapsPass;
+$failCount += $mapsFail;
+
 echo "\n========================================================\n";
 echo "OVERALL SYSTEM SUMMARY: {$passCount} PASSED, {$failCount} FAILED\n";
 echo "========================================================\n";

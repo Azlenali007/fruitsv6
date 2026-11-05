@@ -182,14 +182,16 @@ $authCheckoutRes = OrderService::processCheckout([
     'customer_phone' => $testPhone,
     'customer_email' => $testEmail,
     'fulfilment_method' => 'delivery',
-    'delivery_address' => 'Flat 402, Green Meadows, Arera Colony',
-    'delivery_city' => 'Bhopal',
-    'delivery_pincode' => '462001',
+    'delivery_address' => 'Station Road, Near Jain Temple, Jaora, Madhya Pradesh - 457226',
+    'delivery_city' => 'Jaora',
+    'delivery_pincode' => '457226',
+    'latitude' => 23.635784,
+    'longitude' => 75.124683,
     'payment_method' => 'cod',
     'idempotency_key' => 'idem_auth_' . uniqid()
 ]);
 
-testAssert("Authenticated checkout succeeds", $authCheckoutRes['success'] === true);
+testAssert("Authenticated checkout succeeds", $authCheckoutRes['success'] === true, $authCheckoutRes['error'] ?? '');
 $newOrderNum = $authCheckoutRes['order_number'] ?? '';
 $newOrderRecord = Order::getByOrderNumber($newOrderNum);
 testAssert("Order is linked to customer_id {$testCustomerId}", (int)$newOrderRecord['customer_id'] === $testCustomerId);
@@ -214,7 +216,11 @@ $onlineOrderRes = OrderService::processCheckout([
     'customer_name' => 'Amit Verma',
     'customer_phone' => $testPhone,
     'fulfilment_method' => 'delivery',
-    'delivery_address' => 'Flat 402, Green Meadows, Arera Colony, Bhopal',
+    'delivery_address' => 'Station Road, Opp Municipal Market, Jaora, Madhya Pradesh - 457226',
+    'delivery_city' => 'Jaora',
+    'delivery_pincode' => '457226',
+    'latitude' => 23.635784,
+    'longitude' => 75.124683,
     'payment_method' => 'online',
     'idempotency_key' => 'idem_online_' . uniqid()
 ]);

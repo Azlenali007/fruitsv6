@@ -4,9 +4,8 @@ $pageTitle = 'Delivery Boy Fleet & Live Dispatch';
 require __DIR__ . '/layout-header.php';
 ?>
 
-<!-- Include Leaflet CSS & JS for Admin Live Delivery Fleet Map -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<!-- Google Maps Platform JavaScript API with Geometry Library -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABvsHD8lil-4uRWC5lUT_qIQgGMpV0wGk&libraries=geometry"></script>
 
 <div class="space-y-6" x-data="adminDeliveryApp()">
 
@@ -704,9 +703,10 @@ function adminDeliveryApp() {
         overrideOrderId: null,
         overrideOrderNum: '',
         map: null,
-        markersGroup: null,
-        storeLat: 23.8920,
-        storeLng: 75.1320,
+        markers: [],
+        infoWindow: null,
+        storeLat: 23.635784,
+        storeLng: 75.124683,
 
         init() {
             this.$nextTick(() => {
@@ -716,66 +716,111 @@ function adminDeliveryApp() {
 
         initFleetMap() {
             const container = document.getElementById('adminFleetMap');
-            if (!container) return;
+            if (!container || typeof google === 'undefined' || !google.maps) return;
 
-            this.map = L.map('adminFleetMap', {
-                attributionControl: false
-            }).setView([this.storeLat, this.storeLng], 14);
+            this.map = new google.maps.Map(container, {
+                center: { lat: this.storeLat, lng: this.storeLng },
+                zoom: 14,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: true
+            });
 
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19
-            }).addTo(this.map);
+            this.infoWindow = new google.maps.InfoWindow();
 
-            this.markersGroup = L.featureGroup().addTo(this.map);
+            // Draw Jaora delivery boundary polygon
+            const jaoraCoords = [
+                { lat: 23.6300, lng: 75.1050 },
+                { lat: 23.6500, lng: 75.1100 },
+                { lat: 23.6580, lng: 75.1250 },
+                { lat: 23.6550, lng: 75.1400 },
+                { lat: 23.6420, lng: 75.1480 },
+                { lat: 23.6220, lng: 75.1450 },
+                { lat: 23.6120, lng: 75.1320 },
+                { lat: 23.6150, lng: 75.1150 }
+            ];
+            new google.maps.Polygon({
+                paths: jaoraCoords,
+                strokeColor: '#059669',
+                strokeOpacity: 0.85,
+                strokeWeight: 2,
+                fillColor: '#10b981',
+                fillOpacity: 0.1,
+                map: this.map
+            });
+
             this.refreshMapMarkers();
         },
 
         refreshMapMarkers() {
-            if (!this.map || !this.markersGroup) return;
-            this.markersGroup.clearLayers();
+            if (!this.map || typeof google === 'undefined' || !google.maps) return;
 
-            // Store Pin
-            const storeIcon = L.divIcon({
-                className: 'custom-store-pin',
-                html: '<div style="background:#059669; width:30px; height:30px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 10px rgba(0,0,0,0.4); font-size:16px;">🏬</div>',
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
+            // Clear previous markers
+            this.markers.forEach(m => m.setMap(null));
+            this.markers = [];
+
+            const bounds = new google.maps.LatLngBounds();
+
+            // 1. Store HQ Pin (Fixed location: 23.635784, 75.124683)
+            const storePos = { lat: this.storeLat, lng: this.storeLng };
+            const storeMarker = new google.maps.Marker({
+                position: storePos,
+                map: this.map,
+                title: 'N.A Fresh Fruits & Coconuts (Store HQ)',
+                label: { text: '🏬', fontSize: '18px' }
             });
-            const sm = L.marker([this.storeLat, this.storeLng], { icon: storeIcon }).addTo(this.markersGroup);
-            sm.bindPopup('<strong>N.A Fresh Fruits & Coconuts (Store HQ)</strong><br>Jaora, Station Road');
+            storeMarker.addListener('click', () => {
+                this.infoWindow.setContent('<div class="p-2"><strong>N.A Fresh Fruits & Coconuts (Store HQ)</strong><br><span class="text-xs text-gray-600">Station Road, Jaora, MP - 457226</span></div>');
+                this.infoWindow.open(this.map, storeMarker);
+            });
+            this.markers.push(storeMarker);
+            bounds.extend(storePos);
 
-            // Riders
+            // 2. Delivery Riders
             const riders = <?= json_encode($allRiders) ?>;
             riders.forEach(r => {
                 if (r.current_lat && r.current_lng) {
-                    const riderIcon = L.divIcon({
-                        className: 'custom-rider-pin',
-                        html: `<div style="background:${r.is_online ? '#10b981' : '#6b7280'}; width:28px; height:28px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.3); font-size:14px;">🛵</div>`,
-                        iconSize: [28, 28],
-                        iconAnchor: [14, 14]
+                    const rPos = { lat: parseFloat(r.current_lat), lng: parseFloat(r.current_lng) };
+                    const riderMarker = new google.maps.Marker({
+                        position: rPos,
+                        map: this.map,
+                        title: `Partner: ${r.name}`,
+                        label: { text: '🛵', fontSize: '16px' }
                     });
-                    const rm = L.marker([parseFloat(r.current_lat), parseFloat(r.current_lng)], { icon: riderIcon }).addTo(this.markersGroup);
-                    rm.bindPopup(`<strong>Partner: ${r.name}</strong><br>Phone: ${r.mobile}<br>Status: ${r.is_online ? 'ONLINE' : 'OFFLINE'}`);
+                    riderMarker.addListener('click', () => {
+                        this.infoWindow.setContent(`<div class="p-2"><strong>Partner: ${r.name}</strong><br><span class="text-xs">Phone: ${r.mobile}</span><br><span class="text-xs font-bold ${r.is_online ? 'text-emerald-600' : 'text-gray-500'}">Status: ${r.is_online ? 'ONLINE' : 'OFFLINE'}</span></div>`);
+                        this.infoWindow.open(this.map, riderMarker);
+                    });
+                    this.markers.push(riderMarker);
+                    bounds.extend(rPos);
                 }
             });
 
-            // Active order destinations
+            // 3. Active Order Destinations
             const activeOrders = <?= json_encode($activeOrders) ?>;
             activeOrders.forEach(o => {
                 if (o.latitude && o.longitude) {
-                    const destIcon = L.divIcon({
-                        className: 'custom-dest-pin',
-                        html: '<div style="background:#dc2626; width:26px; height:26px; border-radius:50%; border:2px solid #fff; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.3); font-size:13px;">📍</div>',
-                        iconSize: [26, 26],
-                        iconAnchor: [13, 13]
+                    const dPos = { lat: parseFloat(o.latitude), lng: parseFloat(o.longitude) };
+                    const destMarker = new google.maps.Marker({
+                        position: dPos,
+                        map: this.map,
+                        title: `Order #${o.order_number}`,
+                        label: { text: '📍', fontSize: '15px' }
                     });
-                    const dm = L.marker([parseFloat(o.latitude), parseFloat(o.longitude)], { icon: destIcon }).addTo(this.markersGroup);
-                    dm.bindPopup(`<strong>Order #${o.order_number}</strong><br>Customer: ${o.customer_name}<br>Stage: ${o.delivery_workflow_status}`);
+                    destMarker.addListener('click', () => {
+                        this.infoWindow.setContent(`<div class="p-2"><strong>Order #${o.order_number}</strong><br><span class="text-xs">Customer: ${o.customer_name}</span><br><span class="text-xs">Stage: ${o.delivery_workflow_status}</span></div>`);
+                        this.infoWindow.open(this.map, destMarker);
+                    });
+                    this.markers.push(destMarker);
+                    bounds.extend(dPos);
                 }
             });
 
-            if (this.markersGroup.getLayers().length > 0) {
-                this.map.fitBounds(this.markersGroup.getBounds().pad(0.2));
+            if (this.markers.length > 1) {
+                this.map.fitBounds(bounds);
+            } else {
+                this.map.setCenter(storePos);
+                this.map.setZoom(14);
             }
         },
 
