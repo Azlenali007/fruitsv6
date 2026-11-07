@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Active Delivery #<?= e($order['order_number']) ?> - Delivery Partner Panel</title>
     <link rel="icon" type="image/svg+xml" href="/assets/images/favicon.svg">
-    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="manifest" href="/manifest-delboy.webmanifest">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NA Rider">
+    <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
     <meta name="theme-color" content="#064e3b">
     <meta name="csrf-token" content="<?= csrf_token() ?>">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -115,6 +119,10 @@
             <div class="mt-2 text-[11px] text-slate-400 flex items-center justify-between px-1">
                 <span>🏬 Store &nbsp; 🛵 You &nbsp; 📍 Customer</span>
                 <button type="button" @click="recenterMap()" class="text-emerald-400 hover:underline">Re-center</button>
+            </div>
+            <div class="mt-2 text-[10px] text-slate-500 px-1 border-t border-slate-800/80 pt-1.5 flex items-center justify-between">
+                <span>ℹ️ Screen locked? GPS refreshes as soon as you wake phone</span>
+                <span class="text-emerald-400 font-semibold" x-text="lastPingText"></span>
             </div>
         </div>
 
@@ -425,9 +433,19 @@
                 return order.indexOf(this.currentStep) >= order.indexOf(step);
             },
 
+            watchId: null,
+            lastPingTime: null,
+            lastPingText: 'Waiting for GPS...',
+
             init() {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('/sw-delboy.js', { scope: '/' }).catch(() => {});
+                }
                 this.initMap();
-                this.startGpsTracking();
+                if (this.currentStep !== 'delivered') {
+                    this.startGpsTracking();
+                    this.setupVisibilityListeners();
+                }
             },
 
             initMap() {
@@ -452,7 +470,6 @@
                     ]
                 });
 
-                // Store Marker (Fixed Shop Location: Jaora)
                 this.storeMarker = new google.maps.Marker({
                     position: { lat: this.storeLat, lng: this.storeLng },
                     map: this.map,
@@ -460,7 +477,6 @@
                     label: { text: "🏬", fontSize: "16px" }
                 });
 
-                // Customer Destination Pin
                 this.destMarker = new google.maps.Marker({
                     position: { lat: this.destLat, lng: this.destLng },
                     map: this.map,
@@ -471,6 +487,28 @@
                 this.recenterMap();
             },
 
+            setupVisibilityListeners() {
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible' && this.currentStep !== 'delivered') {
+                        this.refreshSingleGpsPing();
+                    }
+                });
+                window.addEventListener('focus', () => {
+                    if (this.currentStep !== 'delivered') {
+                        this.refreshSingleGpsPing();
+                    }
+                });
+            },
+
+            refreshSingleGpsPing() {
+                if (!navigator.geolocation) return;
+                navigator.geolocation.getCurrentPosition(
+                    pos => this.handleGpsUpdate(pos),
+                    () => {},
+                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 5000 }
+                );
+            },
+
             startGpsTracking() {
                 if (!navigator.geolocation) {
                     this.gpsStatusText = 'GPS Not Supported';
@@ -479,23 +517,27 @@
 
                 this.gpsStatusText = 'Acquiring GPS...';
 
-                navigator.geolocation.watchPosition(
-                    pos => {
-                        this.gpsActive = true;
-                        this.gpsStatusText = 'GPS Active (±' + Math.round(pos.coords.accuracy) + 'm)';
-                        this.currentLat = pos.coords.latitude;
-                        this.currentLng = pos.coords.longitude;
-
-                        this.updateRiderMarker(this.currentLat, this.currentLng);
-                        this.updateEta(this.currentLat, this.currentLng);
-                        this.sendGpsPing(pos.coords);
-                    },
+                this.watchId = navigator.geolocation.watchPosition(
+                    pos => this.handleGpsUpdate(pos),
                     err => {
                         this.gpsActive = false;
                         this.gpsStatusText = 'GPS Denied / Off';
                     },
                     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
                 );
+            },
+
+            handleGpsUpdate(pos) {
+                this.gpsActive = true;
+                this.lastPingTime = new Date();
+                this.lastPingText = 'Updated just now';
+                this.gpsStatusText = 'GPS Active (±' + Math.round(pos.coords.accuracy) + 'm)';
+                this.currentLat = pos.coords.latitude;
+                this.currentLng = pos.coords.longitude;
+
+                this.updateRiderMarker(this.currentLat, this.currentLng);
+                this.updateEta(this.currentLat, this.currentLng);
+                this.sendGpsPing(pos.coords);
             },
 
             updateRiderMarker(lat, lng) {

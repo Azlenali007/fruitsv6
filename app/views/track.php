@@ -14,12 +14,27 @@ $order = $foundOrder ?? null;
 $rider = null;
 $otpInfo = null;
 $timeline = [];
+$storySubmission = null;
+$loyaltyEnabled = LoyaltyService::isEnabled();
+$instagramHandle = Setting::get(LoyaltyService::SETTING_INSTAGRAM_HANDLE, 'nafreshfruitsjaora');
+$instagramUrl = Setting::get(LoyaltyService::SETTING_INSTAGRAM_URL, 'https://instagram.com/nafreshfruitsjaora');
+
 if ($order) {
     if (!empty($order['delivery_boy_id'])) {
         $rider = DeliveryBoy::getById((int)$order['delivery_boy_id']);
+        if ($rider && !empty($rider['last_location_updated_at'])) {
+            $diff = time() - strtotime($rider['last_location_updated_at']);
+            $rider['is_stale'] = ($diff > 60);
+            $rider['last_ping_formatted'] = ($diff < 60) ? 'Just now' : (floor($diff / 60) . ' mins ago');
+        }
     }
     $otpInfo = DeliveryDispatchService::getOtpInfo((int)$order['id']);
     $timeline = DeliveryDispatchService::getTimeline((int)$order['id']);
+
+    $pdo = Database::getConnection();
+    $stmtStory = $pdo->prepare("SELECT * FROM `loyalty_story_submissions` WHERE `order_id` = ? LIMIT 1");
+    $stmtStory->execute([$order['id']]);
+    $storySubmission = $stmtStory->fetch(PDO::FETCH_ASSOC);
 }
 ?>
 
@@ -36,7 +51,8 @@ if ($order) {
     'riderLat' => $rider && $rider['current_lat'] ? (float)$rider['current_lat'] : null,
     'riderLng' => $rider && $rider['current_lng'] ? (float)$rider['current_lng'] : null,
     'plainOtp' => $otpInfo['plain_otp_for_dev'] ?? null,
-    'isOtpVerified' => !empty($otpInfo['verified_at'])
+    'isOtpVerified' => !empty($otpInfo['verified_at']),
+    'storySubmission' => $storySubmission
 ]), ENT_QUOTES, 'UTF-8') ?>)">
     
     <div class="text-center mb-6">
@@ -138,6 +154,130 @@ if ($order) {
                     </a>
                 </div>
             </div>
+
+            <!-- INSTAGRAM STORY LOYALTY REWARDS SECTION -->
+            <div class="bg-gradient-to-br from-pink-50 via-white to-purple-50 rounded-3xl p-5 sm:p-6 border border-pink-200/80 shadow-sm space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-pink-500 via-rose-500 to-purple-600 text-white flex items-center justify-center text-lg shadow-md">
+                            📸
+                        </div>
+                        <div>
+                            <span class="text-[10px] font-black uppercase tracking-wider text-pink-600 block">
+                                Customer Loyalty Program
+                            </span>
+                            <h3 class="text-base font-extrabold text-gray-900 leading-tight">
+                                Share on Instagram & Earn 100 Coins
+                            </h3>
+                        </div>
+                    </div>
+                    <span class="px-2.5 py-1 bg-pink-100 text-pink-800 text-[10px] font-bold rounded-lg border border-pink-200">
+                        100 Coins = 50% OFF
+                    </span>
+                </div>
+
+                <p class="text-xs text-gray-600 leading-relaxed">
+                    Tag <a href="<?= e($instagramUrl) ?>" target="_blank" class="font-extrabold text-pink-600 hover:underline">@<?= e($instagramHandle) ?></a> in your Instagram Story enjoying your fresh coconuts. Upload a screenshot proof to receive <strong>100 Coins (50% Off Voucher)</strong>!
+                </p>
+
+                <!-- Steps Guide -->
+                <div class="grid grid-cols-3 gap-2 text-center text-[11px] pt-1">
+                    <div class="bg-white/80 p-2.5 rounded-xl border border-pink-100 shadow-xs">
+                        <span class="block text-base mb-1">🥥</span>
+                        <strong class="text-gray-800 block text-[10px]">1. Snap Story</strong>
+                        <span class="text-gray-500 text-[9px]">Photo with your coconuts</span>
+                    </div>
+                    <div class="bg-white/80 p-2.5 rounded-xl border border-pink-100 shadow-xs">
+                        <span class="block text-base mb-1">🏷️</span>
+                        <strong class="text-gray-800 block text-[10px]">2. Tag Us</strong>
+                        <span class="text-gray-500 text-[9px]">@<?= e($instagramHandle) ?></span>
+                    </div>
+                    <div class="bg-white/80 p-2.5 rounded-xl border border-pink-100 shadow-xs">
+                        <span class="block text-base mb-1">🪙</span>
+                        <strong class="text-gray-800 block text-[10px]">3. Get Coins</strong>
+                        <span class="text-gray-500 text-[9px]">Upload proof below</span>
+                    </div>
+                </div>
+
+                <!-- Existing Submission Status Banners -->
+                <div x-show="storySubmission && storySubmission.status === 'pending'" x-cloak
+                     class="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-1">
+                    <div class="flex items-center gap-2 font-bold">
+                        <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping"></span>
+                        <span>Submission Under Review by Store Manager</span>
+                    </div>
+                    <p class="text-[11px] text-amber-800">
+                        Submitted for <strong x-text="'@' + storySubmission?.instagram_username"></strong>. 100 coins will be credited to your account upon verification within 24 hours.
+                    </p>
+                </div>
+
+                <div x-show="storySubmission && storySubmission.status === 'approved'" x-cloak
+                     class="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 space-y-1">
+                    <div class="flex items-center gap-2 font-bold">
+                        <span>🎉</span>
+                        <span>Story Verified & 100 Coins Credited!</span>
+                    </div>
+                    <p class="text-[11px] text-emerald-800">
+                        Thank you for sharing the fresh love! Visit your <a href="/account" class="font-bold underline text-emerald-950">Loyalty Wallet</a> to redeem your 50% discount voucher.
+                    </p>
+                </div>
+
+                <div x-show="storySubmission && storySubmission.status === 'rejected'" x-cloak
+                     class="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-900 space-y-1">
+                    <div class="flex items-center gap-2 font-bold">
+                        <span>⚠️</span>
+                        <span>Submission Rejected</span>
+                    </div>
+                    <p class="text-[11px] text-red-800" x-text="'Reason: ' + (storySubmission?.rejection_reason || 'Screenshot unclear or tag missing.')"></p>
+                    <p class="text-[10px] text-gray-600 mt-1">You may re-submit a clear screenshot proof below.</p>
+                </div>
+
+                <!-- Submission Form (if not yet submitted, or if rejected) -->
+                <div x-show="!storySubmission || storySubmission.status === 'rejected'" class="space-y-3 pt-2 border-t border-pink-100">
+                    <?php if (!CustomerAuthService::check()): ?>
+                        <div class="text-center py-3 bg-white/80 rounded-2xl border border-gray-100">
+                            <p class="text-xs text-gray-600 mb-2">Please log in to your customer account to submit story proof and claim your coins.</p>
+                            <a href="/login?redirect=<?= urlencode('/track?h=' . ($order['tracking_hash'] ?? '')) ?>"
+                               class="px-5 py-2 bg-pink-600 hover:bg-pink-700 text-white font-bold text-xs rounded-xl shadow-xs transition inline-block">
+                                Log In to Submit Proof
+                            </a>
+                        </div>
+                    <?php else: ?>
+                        <form @submit.prevent="submitStoryProof()" class="space-y-3 text-xs">
+                            <div>
+                                <label class="block font-bold text-gray-700 text-[11px] mb-1">Your Instagram Username</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400 font-bold pointer-events-none">@</span>
+                                    <input type="text"
+                                           x-model="storyHandle"
+                                           required
+                                           placeholder="your_handle"
+                                           class="w-full pl-7 pr-3 py-2.5 bg-white border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-pink-500 focus:outline-none">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block font-bold text-gray-700 text-[11px] mb-1">Story Screenshot Proof (JPG, PNG, WebP)</label>
+                                <input type="file"
+                                       @change="handleProofFileSelect($event)"
+                                       accept="image/jpeg,image/png,image/webp"
+                                       required
+                                       class="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-pink-50 file:text-pink-700 hover:file:bg-pink-100">
+                            </div>
+
+                            <button type="submit"
+                                    :disabled="submittingStory || !storyHandle"
+                                    class="w-full py-3 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50">
+                                <span x-show="!submittingStory">📸 Submit Story Proof for 100 Coins</span>
+                                <span x-show="submittingStory" x-cloak class="flex items-center gap-1.5">
+                                    <svg class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    <span>Uploading Proof...</span>
+                                </span>
+                            </button>
+                        </form>
+                    <?php endif; ?>
+                </div>
+            </div>
         </template>
 
         <!-- BLINKIT-STYLE CUSTOMER DELIVERY OTP BANNER (Only when out for delivery / picked up) -->
@@ -178,10 +318,19 @@ if ($order) {
 
             <div class="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-1">
                 <span>🟢 Store &nbsp; 🛵 Delivery Partner &nbsp; 📍 Your Address</span>
-                <span class="text-emerald-600 font-bold flex items-center gap-1">
-                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                    <span>Live GPS Active</span>
-                </span>
+                <div class="flex items-center gap-2">
+                    <template x-if="rider && rider.is_stale">
+                        <span class="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                            Last known location from <span x-text="rider.last_ping_formatted"></span> (Rider screen locked / switched apps)
+                        </span>
+                    </template>
+                    <template x-if="!rider || !rider.is_stale">
+                        <span class="text-emerald-600 font-bold flex items-center gap-1">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                            <span>Live GPS Active</span>
+                        </span>
+                    </template>
+                </div>
             </div>
         </div>
         <?php endif; ?>
@@ -280,6 +429,10 @@ function customerTracker(initialData) {
         plainOtp: initialData.plainOtp,
         isOtpVerified: initialData.isOtpVerified,
         rider: <?= json_encode($rider) ?>,
+        storySubmission: initialData.storySubmission,
+        storyHandle: '',
+        storyProofFile: null,
+        submittingStory: false,
         map: null,
         riderMarker: null,
         storeMarker: null,
@@ -288,6 +441,52 @@ function customerTracker(initialData) {
         storeLng: 75.124683,
         etaText: '',
         pollTimer: null,
+
+        handleProofFileSelect(e) {
+            this.storyProofFile = e.target.files[0] || null;
+        },
+
+        async submitStoryProof() {
+            if (!this.storyHandle) {
+                alert('Please enter your Instagram username.');
+                return;
+            }
+            if (!this.storyProofFile) {
+                alert('Please select your story screenshot image proof.');
+                return;
+            }
+            this.submittingStory = true;
+            try {
+                const fd = new FormData();
+                fd.append('order_id', this.orderId);
+                fd.append('instagram_username', this.storyHandle);
+                fd.append('proof_image', this.storyProofFile);
+                fd.append('<?= CSRF_TOKEN_KEY ?>', '<?= csrf_token() ?>');
+
+                const res = await fetch('/api/loyalty/submit-story', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: fd
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(data.message || 'Story proof submitted successfully! 100 coins will be awarded upon review.');
+                    this.storySubmission = {
+                        status: 'pending',
+                        instagram_username: this.storyHandle
+                    };
+                } else {
+                    alert(data.error || 'Failed to submit proof.');
+                }
+            } catch(e) {
+                alert('Network error submitting proof. Please check your internet connection.');
+            } finally {
+                this.submittingStory = false;
+            }
+        },
 
         get statusBadgeText() {
             const map = {

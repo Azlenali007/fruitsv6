@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Delivery Partner Dashboard - N.A Fresh Coconuts</title>
     <link rel="icon" type="image/svg+xml" href="/assets/images/favicon.svg">
-    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="manifest" href="/manifest-delboy.webmanifest">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NA Rider">
+    <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
     <meta name="theme-color" content="#064e3b">
     <meta name="csrf-token" content="<?= csrf_token() ?>">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -45,6 +49,124 @@
 
     <!-- Main Content Container -->
     <main class="max-w-lg mx-auto px-4 py-4 space-y-4">
+
+        <!-- PWA Install Banner (Android / Desktop Chrome) -->
+        <div x-show="showInstallBanner" x-cloak
+             class="bg-gradient-to-r from-emerald-900 to-slate-900 border border-emerald-500/50 rounded-2xl p-3.5 shadow-lg flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+                <span class="w-9 h-9 rounded-xl bg-emerald-500 text-slate-950 font-black flex items-center justify-center text-sm shadow-md">
+                    📲
+                </span>
+                <div>
+                    <h3 class="text-xs font-bold text-white">Install N.A Rider App</h3>
+                    <p class="text-[10px] text-emerald-200">Get instant order alerts & quick full-screen access</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+                <button type="button" @click="installPwa()"
+                        class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition">
+                    Install
+                </button>
+                <button type="button" @click="showInstallBanner = false"
+                        class="p-1.5 text-slate-400 hover:text-white rounded-lg transition text-xs">
+                    ✕
+                </button>
+            </div>
+        </div>
+
+        <!-- iOS Safari Add to Home Screen Banner -->
+        <div x-show="isIos && !isStandalone && showIosBanner" x-cloak
+             class="bg-gradient-to-r from-indigo-950 to-slate-900 border border-indigo-500/40 rounded-2xl p-3.5 shadow-lg flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+                <span class="w-9 h-9 rounded-xl bg-indigo-600 text-white font-black flex items-center justify-center text-sm shadow-md">
+                    🍎
+                </span>
+                <div>
+                    <h3 class="text-xs font-bold text-white">Install on iPhone</h3>
+                    <p class="text-[10px] text-indigo-200">Add to Home Screen via Safari</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+                <button type="button" @click="showIosModal = true"
+                        class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition">
+                    View Guide
+                </button>
+                <button type="button" @click="showIosBanner = false"
+                        class="p-1.5 text-slate-400 hover:text-white rounded-lg transition text-xs">
+                    ✕
+                </button>
+            </div>
+        </div>
+
+        <!-- iOS Installation Instructions Modal -->
+        <div x-show="showIosModal" x-cloak
+             class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-slate-900 border border-slate-700 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
+                        <span>📲</span>
+                        <span>Install NA Rider on iPhone</span>
+                    </h3>
+                    <button type="button" @click="showIosModal = false" class="text-slate-400 hover:text-white font-bold text-lg">✕</button>
+                </div>
+                <div class="space-y-3 text-xs text-slate-300">
+                    <div class="flex items-start gap-3">
+                        <span class="w-6 h-6 rounded-full bg-slate-800 text-emerald-400 font-black flex items-center justify-center shrink-0">1</span>
+                        <p>Open this page in <strong>Safari</strong> on your iPhone.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="w-6 h-6 rounded-full bg-slate-800 text-emerald-400 font-black flex items-center justify-center shrink-0">2</span>
+                        <p>Tap the <strong>Share</strong> button at the bottom of the screen (square icon with an arrow pointing up).</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="w-6 h-6 rounded-full bg-slate-800 text-emerald-400 font-black flex items-center justify-center shrink-0">3</span>
+                        <p>Scroll down and select <strong>"Add to Home Screen"</strong>.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="w-6 h-6 rounded-full bg-slate-800 text-emerald-400 font-black flex items-center justify-center shrink-0">4</span>
+                        <p>Tap <strong>Add</strong> in the top-right corner. The NA Rider app icon will be ready on your home screen!</p>
+                    </div>
+                </div>
+                <button type="button" @click="showIosModal = false"
+                        class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition">
+                    Got it
+                </button>
+            </div>
+        </div>
+
+        <!-- GPS Permission & Tracking Status Widget -->
+        <div class="bg-slate-900 border rounded-2xl p-3.5 shadow-md"
+             :class="gpsPermission === 'granted' ? 'border-emerald-500/40 bg-slate-900/90' : (gpsPermission === 'denied' ? 'border-red-500/50 bg-red-950/30' : 'border-amber-500/50 bg-amber-950/30')">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full"
+                          :class="gpsPermission === 'granted' ? 'bg-emerald-400 animate-ping' : (gpsPermission === 'denied' ? 'bg-red-400' : 'bg-amber-400 animate-pulse')"></span>
+                    <span class="text-xs font-bold"
+                          :class="gpsPermission === 'granted' ? 'text-emerald-300' : (gpsPermission === 'denied' ? 'text-red-300' : 'text-amber-300')">
+                        <span x-show="gpsPermission === 'granted'">GPS Active <span x-text="gpsAccuracy ? '(±' + gpsAccuracy + 'm)' : ''"></span></span>
+                        <span x-show="gpsPermission === 'denied'">GPS Permission Denied</span>
+                        <span x-show="gpsPermission === 'prompt'">GPS Permission Required</span>
+                    </span>
+                </div>
+                <div>
+                    <span x-show="gpsPermission === 'granted'" class="text-[10px] text-slate-400" x-text="lastPingText"></span>
+                    <button x-show="gpsPermission !== 'granted'" type="button" @click="requestGpsPermission()"
+                            class="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] rounded-lg shadow-sm transition">
+                        Allow GPS
+                    </button>
+                </div>
+            </div>
+
+            <!-- Permission Explanation / Background Tracking Notice -->
+            <div class="mt-2 text-[11px] text-slate-400 border-t border-slate-800/80 pt-2 space-y-1">
+                <p x-show="gpsPermission !== 'granted'" class="text-amber-200/90 leading-tight">
+                    📍 <strong>Why location is needed:</strong> Real-time coordinates are required for route guidance and accurate customer arrival estimates during active deliveries.
+                </p>
+                <p class="text-slate-500 leading-tight">
+                    ℹ️ <em>Background GPS Note:</em> Mobile browsers suspend background timers when the screen locks or apps switch. Keep your phone unlocked during active transit or reopen the app to refresh your position instantly.
+                </p>
+            </div>
+        </div>
 
         <!-- Flash messages -->
         <?php $flash = get_flash(); if ($flash): ?>
@@ -226,10 +348,130 @@
             pollCounter: 6,
             audioCtx: null,
 
+            // PWA Install State
+            deferredPrompt: null,
+            showInstallBanner: false,
+            showIosBanner: true,
+            showIosModal: false,
+            isIos: /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream,
+            isStandalone: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
+
+            // GPS Tracking State
+            gpsPermission: 'prompt',
+            gpsAccuracy: null,
+            lastPingTime: null,
+            lastPingText: '',
+
             init() {
+                this.initPwa();
+                this.checkGpsPermission();
                 this.startPolling();
-                // Send an initial GPS ping if geolocation permitted
+                this.setupVisibilityListeners();
                 this.pingLocation();
+            },
+
+            initPwa() {
+                // Register Service Worker
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('/sw-delboy.js', { scope: '/' })
+                        .catch(err => console.warn('SW registration warning:', err));
+                }
+
+                // Android Chrome / Edge beforeinstallprompt
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    this.deferredPrompt = e;
+                    if (!this.isStandalone) {
+                        this.showInstallBanner = true;
+                    }
+                });
+
+                window.addEventListener('appinstalled', () => {
+                    this.deferredPrompt = null;
+                    this.showInstallBanner = false;
+                });
+            },
+
+            async installPwa() {
+                if (!this.deferredPrompt) return;
+                this.deferredPrompt.prompt();
+                const choice = await this.deferredPrompt.userChoice;
+                if (choice.outcome === 'accepted') {
+                    this.showInstallBanner = false;
+                }
+                this.deferredPrompt = null;
+            },
+
+            checkGpsPermission() {
+                if (!navigator.geolocation) {
+                    this.gpsPermission = 'denied';
+                    return;
+                }
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({ name: 'geolocation' }).then(result => {
+                        this.gpsPermission = result.state;
+                        result.onchange = () => {
+                            this.gpsPermission = result.state;
+                            if (result.state === 'granted') {
+                                this.pingLocation();
+                            }
+                        };
+                    }).catch(() => {});
+                }
+            },
+
+            requestGpsPermission() {
+                if (!navigator.geolocation) {
+                    alert('Geolocation is not supported by your device browser.');
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    pos => {
+                        this.gpsPermission = 'granted';
+                        this.handleGpsPosition(pos);
+                    },
+                    err => {
+                        this.gpsPermission = 'denied';
+                        alert('Location permission denied. Please allow location access in your device settings.');
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+                );
+            },
+
+            setupVisibilityListeners() {
+                // Resume immediate location ping when rider unlocks phone or returns to app
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        this.pingLocation();
+                        if (this.isOnline) {
+                            this.fetchAvailableOrders();
+                        }
+                    }
+                });
+                window.addEventListener('focus', () => this.pingLocation());
+                window.addEventListener('pageshow', () => this.pingLocation());
+            },
+
+            handleGpsPosition(pos) {
+                this.gpsAccuracy = Math.round(pos.coords.accuracy);
+                this.lastPingTime = new Date();
+                this.lastPingText = 'Just now';
+
+                const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+                fetch('/api/delivery/gps-ping', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': csrf
+                    },
+                    body: JSON.stringify({
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        heading: pos.coords.heading,
+                        speed: pos.coords.speed,
+                        accuracy: pos.coords.accuracy
+                    })
+                }).catch(() => {});
             },
 
             playChime() {
@@ -238,8 +480,8 @@
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
                     osc.type = 'sine';
-                    osc.frequency.setValueAtTime(880, ctx.currentTime); // A5 note
-                    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.15); // E6
+                    osc.frequency.setValueAtTime(880, ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.15);
                     gain.gain.setValueAtTime(0.3, ctx.currentTime);
                     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
                     osc.connect(gain);
@@ -252,6 +494,10 @@
             startPolling() {
                 this.pollTimer = setInterval(() => {
                     this.pollCounter--;
+                    if (this.lastPingTime) {
+                        const elapsedSecs = Math.round((new Date() - this.lastPingTime) / 1000);
+                        this.lastPingText = elapsedSecs < 10 ? 'Just now' : (elapsedSecs + 's ago');
+                    }
                     if (this.pollCounter <= 0) {
                         this.pollCounter = 6;
                         if (this.isOnline) {
@@ -269,7 +515,6 @@
                     });
                     const data = await res.json();
                     if (data.success && Array.isArray(data.orders)) {
-                        // Check if new orders arrived
                         let hasNew = false;
                         data.orders.forEach(o => {
                             if (!this.knownOrderIds.has(o.id)) {
@@ -320,7 +565,6 @@
             async acceptOrder(orderId) {
                 if (this.acceptingOrderId !== null) return;
                 this.acceptingOrderId = orderId;
-                // Temporarily pause polling counter while accepting
                 this.pollCounter = 20;
 
                 try {
@@ -373,23 +617,14 @@
                 if (!navigator.geolocation) return;
                 navigator.geolocation.getCurrentPosition(
                     pos => {
-                        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-                        fetch('/api/delivery/gps-ping', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRF-TOKEN': csrf
-                            },
-                            body: JSON.stringify({
-                                lat: pos.coords.latitude,
-                                lng: pos.coords.longitude,
-                                heading: pos.coords.heading,
-                                speed: pos.coords.speed,
-                                accuracy: pos.coords.accuracy
-                            })
-                        }).catch(() => {});
+                        this.gpsPermission = 'granted';
+                        this.handleGpsPosition(pos);
                     },
-                    err => {},
+                    err => {
+                        if (err.code === err.PERMISSION_DENIED) {
+                            this.gpsPermission = 'denied';
+                        }
+                    },
                     { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
                 );
             }

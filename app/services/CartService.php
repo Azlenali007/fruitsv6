@@ -325,7 +325,35 @@ class CartService {
             return ['success' => false, 'error' => 'Your cart is empty. Please add items before applying a coupon.'];
         }
 
-        $val = Coupon::validateCoupon($code, $subtotal, $customerId, $phone, $fulfilment);
+        $cleanCode = strtoupper(trim($code));
+
+        // Support 50% Loyalty Reward Vouchers
+        if (str_starts_with($cleanCode, 'NA50-')) {
+            $loyaltyVal = LoyaltyService::validateVoucher($cleanCode, $customerId ?? 0, $subtotal);
+            if (!$loyaltyVal['valid']) {
+                return ['success' => false, 'error' => $loyaltyVal['error']];
+            }
+            $_SESSION[self::COUPON_SESSION_KEY] = $cleanCode;
+            return [
+                'success' => true,
+                'message' => '50% Loyalty Voucher applied successfully! Discount: ₹' . number_format($loyaltyVal['discount_amount'], 2),
+                'coupon' => [
+                    'code' => $cleanCode,
+                    'type' => 'percentage',
+                    'discount_value' => $loyaltyVal['discount_percent'],
+                    'name' => '50% Loyalty Reward Voucher',
+                    'is_loyalty' => true,
+                    'is_loyalty_voucher' => true
+                ],
+                'is_loyalty_voucher' => true,
+                'calculation' => [
+                    'discount_amount' => $loyaltyVal['discount_amount'],
+                    'delivery_discount' => 0.00
+                ]
+            ];
+        }
+
+        $val = Coupon::validateCoupon($cleanCode, $subtotal, $customerId, $phone, $fulfilment);
         if (!$val['valid']) {
             return ['success' => false, 'error' => $val['error']];
         }
@@ -358,13 +386,46 @@ class CartService {
             return null;
         }
 
-        $code = $_SESSION[self::COUPON_SESSION_KEY];
+        $code = strtoupper(trim($_SESSION[self::COUPON_SESSION_KEY]));
         $cart = self::getCart();
         $subtotal = (float)$cart['subtotal'];
 
         if ($subtotal <= 0) {
             self::removeCoupon();
             return null;
+        }
+
+        if ($customerId === null) {
+            if (class_exists('CustomerAuthService') && CustomerAuthService::check()) {
+                $customerId = CustomerAuthService::id();
+            } elseif (!empty($_SESSION['customer_id'])) {
+                $customerId = (int)$_SESSION['customer_id'];
+            }
+        }
+
+        // Check if loyalty voucher (NA50-...)
+        if (str_starts_with($code, 'NA50-')) {
+            $loyaltyVal = LoyaltyService::validateVoucher($code, $customerId ?? 0, $subtotal);
+            if (!$loyaltyVal['valid']) {
+                self::removeCoupon();
+                return null;
+            }
+            return [
+                'coupon' => [
+                    'id' => 0,
+                    'code' => $loyaltyVal['code'],
+                    'type' => 'percentage',
+                    'discount_value' => $loyaltyVal['discount_percent'],
+                    'name' => '50% Loyalty Reward Voucher',
+                    'is_loyalty' => true,
+                    'is_loyalty_voucher' => true
+                ],
+                'is_loyalty_voucher' => true,
+                'calculation' => [
+                    'discount_amount' => $loyaltyVal['discount_amount'],
+                    'delivery_discount' => 0.00
+                ]
+            ];
         }
 
         $val = Coupon::validateCoupon($code, $subtotal, $customerId, $phone, $fulfilment);

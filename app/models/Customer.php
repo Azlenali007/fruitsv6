@@ -137,6 +137,7 @@ class Customer {
         $pdo = Database::getConnection();
         $cleanPhone = self::normalizePhone($data['phone']);
         $formattedPhone = '+91 ' . $cleanPhone;
+        $pwdHash = $data['password_hash'] ?? (isset($data['password']) ? password_hash($data['password'], PASSWORD_DEFAULT) : password_hash('Guest@123', PASSWORD_DEFAULT));
 
         $stmt = $pdo->prepare("
             INSERT INTO `customers` (
@@ -148,7 +149,7 @@ class Customer {
             trim($data['name']),
             $formattedPhone,
             !empty($data['email']) ? strtolower(trim($data['email'])) : null,
-            $data['password_hash'],
+            $pwdHash,
             trim($data['address'] ?? ''),
             trim($data['city'] ?? 'Bhopal'),
             trim($data['state'] ?? 'Madhya Pradesh'),

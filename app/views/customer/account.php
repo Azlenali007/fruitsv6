@@ -17,6 +17,13 @@ foreach ($orders as $o) {
         $totalSpent += (float)$o['total_amount'];
     }
 }
+
+// Loyalty & Rewards Data
+$wallet = LoyaltyService::getWallet($customerId);
+$vouchers = LoyaltyService::getCustomerVouchers($customerId);
+$ledger = LoyaltyService::getLedger($customerId, 15);
+$storySubmissions = LoyaltyService::getCustomerSubmissions($customerId);
+$loyaltyThreshold = (int)Setting::get(LoyaltyService::SETTING_REDEMPTION_THRESHOLD, '100');
 ?>
 
 <div class="max-w-4xl mx-auto px-4 py-8 sm:py-10 space-y-8">
@@ -65,8 +72,133 @@ foreach ($orders as $o) {
             <p class="text-2xl sm:text-3xl font-black text-brand-600">₹<?= number_format($totalSpent, 2) ?></p>
         </div>
         <div class="col-span-2 sm:col-span-1 bg-white rounded-2xl p-4 sm:p-5 border border-gray-100 shadow-xs">
-            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Default Locality</span>
-            <p class="text-sm font-bold text-gray-800 truncate"><?= e($customer['city'] ?? 'Bhopal') ?>, <?= e($customer['state'] ?? 'MP') ?></p>
+            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Loyalty Coins</span>
+            <p class="text-2xl sm:text-3xl font-black text-amber-500"><?= (int)$wallet['current_balance'] ?> 🪙</p>
+        </div>
+    </div>
+
+    <!-- CUSTOMER LOYALTY WALLET & 50% VOUCHER REDEMPTION SECTION -->
+    <div class="bg-gradient-to-br from-amber-500/10 via-white to-emerald-500/10 rounded-3xl p-6 sm:p-8 border border-amber-200 shadow-sm space-y-6"
+         x-data="loyaltyWallet(<?= htmlspecialchars(json_encode([
+             'balance' => (int)$wallet['current_balance'],
+             'totalEarned' => (int)$wallet['total_earned'],
+             'totalRedeemed' => (int)$wallet['total_redeemed'],
+             'threshold' => $loyaltyThreshold
+         ]), ENT_QUOTES, 'UTF-8') ?>)">
+        
+        <!-- Header & Balance -->
+        <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-amber-100 pb-5">
+            <div class="flex items-center gap-3.5">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-500 text-slate-950 flex items-center justify-center text-2xl font-black shadow-md shadow-amber-400/30">
+                    🪙
+                </div>
+                <div>
+                    <span class="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
+                        N.A Fresh Rewards Wallet
+                    </span>
+                    <h2 class="text-xl sm:text-2xl font-black text-gray-900 mt-1">Loyalty Coin Balance</h2>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="text-right">
+                    <span class="text-3xl sm:text-4xl font-black text-amber-600 block leading-tight" x-text="balance + ' Coins'">
+                        <?= (int)$wallet['current_balance'] ?> Coins
+                    </span>
+                    <span class="text-[11px] text-gray-500">
+                        Earned: <?= (int)$wallet['total_earned'] ?> • Redeemed: <?= (int)$wallet['total_redeemed'] ?>
+                    </span>
+                </div>
+
+                <button type="button"
+                        @click="redeemVoucher()"
+                        :disabled="balance < threshold || redeeming"
+                        class="px-5 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 active:scale-95 text-slate-950 font-black text-xs rounded-2xl shadow-lg shadow-amber-500/30 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2">
+                    <span x-show="!redeeming">🎟️ Redeem 100 Coins (50% OFF)</span>
+                    <span x-show="redeeming" x-cloak class="flex items-center gap-1.5">
+                        <svg class="animate-spin w-4 h-4 text-slate-950" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <span>Generating Voucher...</span>
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Available Vouchers List -->
+        <div>
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Your 50% Discount Vouchers</h3>
+            <?php if (empty($vouchers)): ?>
+                <div class="p-4 bg-white/70 rounded-2xl border border-gray-100 text-center text-xs text-gray-500">
+                    No vouchers generated yet. Share your delivered orders on Instagram to earn 100 coins and redeem a 50% discount voucher!
+                </div>
+            <?php else: ?>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <?php foreach ($vouchers as $v): ?>
+                        <div class="p-4 rounded-2xl border transition shadow-xs <?= empty($v['is_used']) ? 'bg-gradient-to-br from-emerald-50 to-white border-emerald-300' : 'bg-gray-50 border-gray-200 opacity-60' ?>">
+                            <div class="flex items-center justify-between pb-2 border-b <?= empty($v['is_used']) ? 'border-emerald-100' : 'border-gray-200' ?>">
+                                <span class="font-mono text-sm font-black text-gray-900 tracking-wider"><?= e($v['code']) ?></span>
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase <?= empty($v['is_used']) ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-600' ?>">
+                                    <?= empty($v['is_used']) ? '50% OFF ACTIVE' : 'USED' ?>
+                                </span>
+                            </div>
+                            <div class="mt-2 text-[11px] text-gray-600 flex items-center justify-between">
+                                <span>Max discount: ₹<?= number_format((float)$v['max_discount_amount'], 2) ?></span>
+                                <span>Expires: <?= date('d M Y', strtotime($v['expires_at'])) ?></span>
+                            </div>
+                            <?php if (empty($v['is_used'])): ?>
+                                <div class="mt-3 pt-2 border-t border-emerald-100/60 flex items-center justify-between">
+                                    <button type="button" @click="copyVoucher('<?= e($v['code']) ?>')"
+                                            class="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1">
+                                        <span>📋 Copy Code</span>
+                                    </button>
+                                    <a href="/shop" class="text-xs font-extrabold text-brand-600 hover:underline">Apply in Cart &rarr;</a>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Auditable Transaction Ledger Table -->
+        <div>
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">Coin Transaction Ledger</h3>
+                <span class="text-[10px] text-gray-400">Date-wise audit trail</span>
+            </div>
+            <?php if (empty($ledger)): ?>
+                <p class="text-xs text-gray-400">No transaction records yet.</p>
+            <?php else: ?>
+                <div class="overflow-x-auto bg-white rounded-2xl border border-gray-100 shadow-xs">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-gray-50 text-[10px] uppercase font-bold text-gray-400 border-b border-gray-100">
+                            <tr>
+                                <th class="py-2.5 px-3">Date</th>
+                                <th class="py-2.5 px-3">Type</th>
+                                <th class="py-2.5 px-3 text-right">Coins</th>
+                                <th class="py-2.5 px-3 text-right">Balance</th>
+                                <th class="py-2.5 px-3">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 text-[11px]">
+                            <?php foreach ($ledger as $tx): ?>
+                                <tr class="hover:bg-gray-50/50">
+                                    <td class="py-2 px-3 text-gray-500"><?= date('d M Y, h:i A', strtotime($tx['created_at'])) ?></td>
+                                    <td class="py-2 px-3">
+                                        <span class="px-2 py-0.5 rounded-md font-bold uppercase text-[9px] <?= $tx['amount'] > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200' ?>">
+                                            <?= e(str_replace('_', ' ', $tx['type'])) ?>
+                                        </span>
+                                    </td>
+                                    <td class="py-2 px-3 text-right font-black <?= $tx['amount'] > 0 ? 'text-emerald-600' : 'text-amber-600' ?>">
+                                        <?= $tx['amount'] > 0 ? '+' . (int)$tx['amount'] : (int)$tx['amount'] ?>
+                                    </td>
+                                    <td class="py-2 px-3 text-right font-bold text-gray-700"><?= (int)$tx['balance_after'] ?></td>
+                                    <td class="py-2 px-3 text-gray-500 max-w-xs truncate"><?= e($tx['description']) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -231,5 +363,58 @@ foreach ($orders as $o) {
 
     </div>
 </div>
+<script>
+function loyaltyWallet(initial) {
+    return {
+        balance: initial.balance,
+        totalEarned: initial.totalEarned,
+        totalRedeemed: initial.totalRedeemed,
+        threshold: initial.threshold,
+        redeeming: false,
+
+        async redeemVoucher() {
+            if (this.balance < this.threshold) {
+                alert(`You need at least ${this.threshold} coins to redeem a 50% discount voucher.`);
+                return;
+            }
+            if (!confirm(`Redeem ${this.threshold} Loyalty Coins for a 50% Discount Voucher?`)) {
+                return;
+            }
+
+            this.redeeming = true;
+            try {
+                const res = await fetch('/api/loyalty/redeem-voucher', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '<?= csrf_token() ?>',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({ <?= CSRF_TOKEN_KEY ?>: '<?= csrf_token() ?>' })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(data.message || `Voucher ${data.voucher_code} generated successfully!`);
+                    window.location.reload();
+                } else {
+                    alert(data.error || 'Failed to redeem voucher.');
+                }
+            } catch(e) {
+                alert('Network error during voucher redemption.');
+            } finally {
+                this.redeeming = false;
+            }
+        },
+
+        copyVoucher(code) {
+            navigator.clipboard.writeText(code).then(() => {
+                alert(`Voucher code "${code}" copied to clipboard! Paste it at checkout for 50% off.`);
+            }).catch(() => {
+                prompt('Copy your voucher code:', code);
+            });
+        }
+    };
+}
+</script>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

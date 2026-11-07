@@ -172,7 +172,7 @@ class Order {
             }
 
 
-            // Coupon validation & discount computation
+            // Coupon & Loyalty Voucher validation & discount computation
             $couponId = null;
             $couponCode = null;
             $couponType = null;
@@ -180,65 +180,88 @@ class Order {
             $deliveryDiscount = 0.00;
 
             if (!empty($orderData['coupon_code'])) {
-                $rawCouponCode = Coupon::normalizeCode($orderData['coupon_code']);
-                $stmtCpn = $pdo->prepare("SELECT * FROM `coupons` WHERE `code` = ? FOR UPDATE");
-                $stmtCpn->execute([$rawCouponCode]);
-                $coupon = $stmtCpn->fetch();
+                $rawCouponCode = strtoupper(trim($orderData['coupon_code']));
 
-                if (!$coupon) {
-                    throw new Exception("Coupon code '{$rawCouponCode}' is invalid.");
+                // Check if this is a 50% Loyalty Reward Voucher
+                $isLoyaltyVoucher = str_starts_with($rawCouponCode, 'NA50-');
+                if (!$isLoyaltyVoucher) {
+                    $stmtCheckLoyal = $pdo->prepare("SELECT id FROM `loyalty_vouchers` WHERE `code` = ? LIMIT 1");
+                    $stmtCheckLoyal->execute([$rawCouponCode]);
+                    $isLoyaltyVoucher = (bool)$stmtCheckLoyal->fetchColumn();
                 }
 
-                if ((int)$coupon['is_active'] !== 1) {
-                    throw new Exception("Coupon '{$rawCouponCode}' is currently disabled.");
-                }
-
-                $nowTime = time();
-                if (!empty($coupon['start_date']) && strtotime($coupon['start_date']) > $nowTime) {
-                    throw new Exception("Coupon '{$rawCouponCode}' is not active yet.");
-                }
-
-                if (!empty($coupon['expiry_date']) && strtotime($coupon['expiry_date']) < $nowTime) {
-                    throw new Exception("Coupon '{$rawCouponCode}' has expired.");
-                }
-
-                if ((float)$coupon['min_order_amount'] > 0 && $subtotal < (float)$coupon['min_order_amount']) {
-                    throw new Exception("Minimum order amount of ₹" . number_format($coupon['min_order_amount'], 2) . " required for coupon '{$rawCouponCode}'.");
-                }
-
-                if (!empty($coupon['max_uses']) && (int)$coupon['current_uses'] >= (int)$coupon['max_uses']) {
-                    throw new Exception("Coupon '{$rawCouponCode}' has reached its maximum global usage limit.");
-                }
-
-                // Check per-customer limit
-                $maxPerCust = !empty($coupon['max_uses_per_customer']) ? (int)$coupon['max_uses_per_customer'] : null;
-                if ($maxPerCust !== null) {
-                    $cPhoneClean = Customer::normalizePhone($orderData['customer_phone'] ?? '');
+                if ($isLoyaltyVoucher) {
                     $cId = !empty($orderData['customer_id']) ? (int)$orderData['customer_id'] : 0;
-
-                    $stmtCustUses = $pdo->prepare("
-                        SELECT COUNT(*) FROM `coupon_usage` 
-                        WHERE `coupon_id` = ? AND (
-                            (? > 0 AND `customer_id` = ?) 
-                            OR `customer_phone` = ?
-                            OR REPLACE(REPLACE(`customer_phone`, ' ', ''), '-', '') LIKE ?
-                        )
-                    ");
-                    $stmtCustUses->execute([$coupon['id'], $cId, $cId, $cPhoneClean, '%' . $cPhoneClean]);
-                    $custUses = (int)$stmtCustUses->fetchColumn();
-
-                    if ($custUses >= $maxPerCust) {
-                        throw new Exception("You have already used coupon '{$rawCouponCode}' the maximum allowed {$maxPerCust} time(s).");
+                    $loyaltyCheck = LoyaltyService::validateVoucher($rawCouponCode, $cId, $subtotal);
+                    if (!$loyaltyCheck['valid']) {
+                        throw new Exception($loyaltyCheck['error']);
                     }
-                }
+                    $couponId = null;
+                    $couponCode = $loyaltyCheck['code'];
+                    $couponType = 'loyalty_voucher';
+                    $discountAmount = (float)$loyaltyCheck['discount_amount'];
+                    $deliveryDiscount = 0.00;
+                } else {
+                    $rawCouponCode = Coupon::normalizeCode($rawCouponCode);
+                    $stmtCpn = $pdo->prepare("SELECT * FROM `coupons` WHERE `code` = ? FOR UPDATE");
+                    $stmtCpn->execute([$rawCouponCode]);
+                    $coupon = $stmtCpn->fetch();
 
-                // Calculate discounts
-                $calc = Coupon::calculateDiscount($coupon, $subtotal, $originalDeliveryCharge);
-                $couponId = (int)$coupon['id'];
-                $couponCode = $coupon['code'];
-                $couponType = $coupon['type'];
-                $discountAmount = $calc['discount_amount'];
-                $deliveryDiscount = $calc['delivery_discount'];
+                    if (!$coupon) {
+                        throw new Exception("Coupon code '{$rawCouponCode}' is invalid.");
+                    }
+
+                    if ((int)$coupon['is_active'] !== 1) {
+                        throw new Exception("Coupon '{$rawCouponCode}' is currently disabled.");
+                    }
+
+                    $nowTime = time();
+                    if (!empty($coupon['start_date']) && strtotime($coupon['start_date']) > $nowTime) {
+                        throw new Exception("Coupon '{$rawCouponCode}' is not active yet.");
+                    }
+
+                    if (!empty($coupon['expiry_date']) && strtotime($coupon['expiry_date']) < $nowTime) {
+                        throw new Exception("Coupon '{$rawCouponCode}' has expired.");
+                    }
+
+                    if ((float)$coupon['min_order_amount'] > 0 && $subtotal < (float)$coupon['min_order_amount']) {
+                        throw new Exception("Minimum order amount of ₹" . number_format($coupon['min_order_amount'], 2) . " required for coupon '{$rawCouponCode}'.");
+                    }
+
+                    if (!empty($coupon['max_uses']) && (int)$coupon['current_uses'] >= (int)$coupon['max_uses']) {
+                        throw new Exception("Coupon '{$rawCouponCode}' has reached its maximum global usage limit.");
+                    }
+
+                    // Check per-customer limit
+                    $maxPerCust = !empty($coupon['max_uses_per_customer']) ? (int)$coupon['max_uses_per_customer'] : null;
+                    if ($maxPerCust !== null) {
+                        $cPhoneClean = Customer::normalizePhone($orderData['customer_phone'] ?? '');
+                        $cId = !empty($orderData['customer_id']) ? (int)$orderData['customer_id'] : 0;
+
+                        $stmtCustUses = $pdo->prepare("
+                            SELECT COUNT(*) FROM `coupon_usage` 
+                            WHERE `coupon_id` = ? AND (
+                                (? > 0 AND `customer_id` = ?) 
+                                OR `customer_phone` = ?
+                                OR REPLACE(REPLACE(`customer_phone`, ' ', ''), '-', '') LIKE ?
+                            )
+                        ");
+                        $stmtCustUses->execute([$coupon['id'], $cId, $cId, $cPhoneClean, '%' . $cPhoneClean]);
+                        $custUses = (int)$stmtCustUses->fetchColumn();
+
+                        if ($custUses >= $maxPerCust) {
+                            throw new Exception("You have already used coupon '{$rawCouponCode}' the maximum allowed {$maxPerCust} time(s).");
+                        }
+                    }
+
+                    // Calculate discounts
+                    $calc = Coupon::calculateDiscount($coupon, $subtotal, $originalDeliveryCharge);
+                    $couponId = (int)$coupon['id'];
+                    $couponCode = $coupon['code'];
+                    $couponType = $coupon['type'];
+                    $discountAmount = $calc['discount_amount'];
+                    $deliveryDiscount = $calc['delivery_discount'];
+                }
             }
 
             $effectiveDeliveryCharge = max(0.00, $originalDeliveryCharge - $deliveryDiscount);
@@ -344,6 +367,8 @@ class Order {
                     $deliveryDiscount,
                     $pdo
                 );
+            } elseif ($couponType === 'loyalty_voucher' && !empty($couponCode)) {
+                LoyaltyService::markVoucherUsed($couponCode, $orderId);
             }
 
             // 7. Insert Order Items (Immutable price and configuration snapshot)

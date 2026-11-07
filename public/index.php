@@ -847,6 +847,11 @@ try {
                 $rider = DeliveryBoy::getById((int)$order['delivery_boy_id']);
                 if ($rider) {
                     unset($rider['password_hash']);
+                    if (!empty($rider['last_location_updated_at'])) {
+                        $diff = time() - strtotime($rider['last_location_updated_at']);
+                        $rider['is_stale'] = ($diff > 60);
+                        $rider['last_ping_formatted'] = ($diff < 60) ? 'Just now' : (floor($diff / 60) . ' mins ago');
+                    }
                 }
             }
             $otpInfo = DeliveryDispatchService::getOtpInfo((int)$order['id']);
@@ -2178,6 +2183,190 @@ try {
                 'visitors' => $visitors,
                 'timestamp' => date('h:i:s A')
             ]);
+            break;
+
+        // ------------------------------------------------
+        // Customer Loyalty & Instagram Story Rewards Routes
+        // ------------------------------------------------
+        case '/api/loyalty/submit-story':
+            if ($method === 'POST') {
+                if (!CustomerAuthService::check()) {
+                    json_response(['success' => false, 'error' => 'Please log in to submit your story reward proof.'], 401);
+                }
+                $token = $_POST[CSRF_TOKEN_KEY] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'Security token expired. Please refresh the page.'], 403);
+                }
+                $customer = CustomerAuthService::user();
+                $customerId = (int)$customer['id'];
+                $orderId = (int)($_POST['order_id'] ?? 0);
+                $instagramUser = trim($_POST['instagram_username'] ?? '');
+                $file = $_FILES['proof_image'] ?? [];
+
+                $res = LoyaltyService::submitStoryProof($customerId, $orderId, $instagramUser, $file);
+                json_response($res, $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/loyalty/redeem-voucher':
+            if ($method === 'POST') {
+                if (!CustomerAuthService::check()) {
+                    json_response(['success' => false, 'error' => 'Authentication required.'], 401);
+                }
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $token = $input[CSRF_TOKEN_KEY] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+                if (!verify_csrf_token($token)) {
+                    json_response(['success' => false, 'error' => 'Security token expired.'], 403);
+                }
+                $customer = CustomerAuthService::user();
+                $customerId = (int)$customer['id'];
+                $res = LoyaltyService::redeemCoinsForVoucher($customerId);
+                json_response($res, $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/loyalty/validate-voucher':
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $code = trim($input['code'] ?? '');
+                $subtotal = (float)($input['subtotal'] ?? 0);
+                $customerId = CustomerAuthService::check() ? (int)CustomerAuthService::user()['id'] : 0;
+                $res = LoyaltyService::validateVoucher($code, $customerId, $subtotal);
+                json_response($res, $res['valid'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        // Admin Loyalty Management Routes
+        case '/admin/loyalty':
+            AuthService::requireAdmin();
+            require __DIR__ . '/../app/views/admin/loyalty.php';
+            break;
+
+        case '/admin/loyalty/approve':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /admin/loyalty');
+                    exit;
+                }
+                $subId = (int)($_POST['submission_id'] ?? 0);
+                $admin = AuthService::user();
+                $adminId = (int)($admin['id'] ?? 1);
+                $res = LoyaltyService::approveSubmission($subId, $adminId);
+                if ($res['success']) {
+                    set_flash('success', $res['message']);
+                } else {
+                    set_flash('error', $res['error']);
+                }
+            }
+            header('Location: /admin/loyalty');
+            break;
+
+        case '/admin/loyalty/reject':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /admin/loyalty');
+                    exit;
+                }
+                $subId = (int)($_POST['submission_id'] ?? 0);
+                $reason = trim($_POST['rejection_reason'] ?? '');
+                $admin = AuthService::user();
+                $adminId = (int)($admin['id'] ?? 1);
+                $res = LoyaltyService::rejectSubmission($subId, $adminId, $reason);
+                if ($res['success']) {
+                    set_flash('success', $res['message']);
+                } else {
+                    set_flash('error', $res['error']);
+                }
+            }
+            header('Location: /admin/loyalty');
+            break;
+
+        case '/admin/loyalty/adjust':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /admin/loyalty?tab=wallets');
+                    exit;
+                }
+                $cid = (int)($_POST['customer_id'] ?? 0);
+                $amount = (int)($_POST['amount'] ?? 0);
+                $reason = trim($_POST['reason'] ?? '');
+                $admin = AuthService::user();
+                $adminId = (int)($admin['id'] ?? 1);
+                $res = LoyaltyService::adminAdjust($cid, $amount, $reason, $adminId);
+                if ($res['success']) {
+                    set_flash('success', $res['message']);
+                } else {
+                    set_flash('error', $res['error']);
+                }
+            }
+            header('Location: /admin/loyalty?tab=wallets');
+            break;
+
+        case '/admin/loyalty/settings':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /admin/loyalty?tab=settings');
+                    exit;
+                }
+                Setting::set(LoyaltyService::SETTING_ENABLED, isset($_POST['loyalty_enabled']) ? '1' : '0');
+                if (isset($_POST['instagram_handle'])) {
+                    Setting::set(LoyaltyService::SETTING_INSTAGRAM_HANDLE, trim($_POST['instagram_handle']));
+                }
+                if (isset($_POST['instagram_profile_url'])) {
+                    Setting::set(LoyaltyService::SETTING_INSTAGRAM_URL, trim($_POST['instagram_profile_url']));
+                }
+                if (isset($_POST['loyalty_coins_per_story'])) {
+                    Setting::set(LoyaltyService::SETTING_COINS_PER_STORY, (string)max(1, (int)$_POST['loyalty_coins_per_story']));
+                }
+                if (isset($_POST['loyalty_redemption_threshold'])) {
+                    Setting::set(LoyaltyService::SETTING_REDEMPTION_THRESHOLD, (string)max(10, (int)$_POST['loyalty_redemption_threshold']));
+                }
+                if (isset($_POST['loyalty_voucher_discount_percent'])) {
+                    Setting::set(LoyaltyService::SETTING_DISCOUNT_PERCENT, (string)min(100, max(1, (float)$_POST['loyalty_voucher_discount_percent'])));
+                }
+                if (isset($_POST['loyalty_voucher_max_discount'])) {
+                    Setting::set(LoyaltyService::SETTING_MAX_DISCOUNT, (string)max(0, (float)$_POST['loyalty_voucher_max_discount']));
+                }
+                if (isset($_POST['loyalty_voucher_expiry_days'])) {
+                    Setting::set(LoyaltyService::SETTING_EXPIRY_DAYS, (string)max(1, (int)$_POST['loyalty_voucher_expiry_days']));
+                }
+                set_flash('success', 'Loyalty program settings updated successfully.');
+            }
+            header('Location: /admin/loyalty?tab=settings');
+            break;
+
+        case '/admin/loyalty/proof-image':
+            AuthService::requireAdmin();
+            $subId = (int)($_GET['id'] ?? 0);
+            $pdo = Database::getConnection();
+            $stmtP = $pdo->prepare("SELECT story_proof_path FROM `loyalty_story_submissions` WHERE `id` = ? LIMIT 1");
+            $stmtP->execute([$subId]);
+            $path = $stmtP->fetchColumn();
+            if ($path && file_exists($path)) {
+                $finfo = new finfo(FILEINFO_MIME_TYPE);
+                $mime = $finfo->file($path);
+                header('Content-Type: ' . $mime);
+                header('Content-Length: ' . filesize($path));
+                header('Cache-Control: private, max-age=3600');
+                readfile($path);
+                exit;
+            }
+            http_response_code(404);
+            echo 'Image proof not found';
+            exit;
             break;
 
         // Proper 404 handler for missing routes

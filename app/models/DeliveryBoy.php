@@ -199,4 +199,19 @@ class DeliveryBoy {
             'total_collected' => (float)($cod['total_collected'] ?? 0)
         ];
     }
+
+    public static function isLocationStale(int $id, int $thresholdSeconds = 60): bool {
+        $pdo = Database::getConnection();
+        $stmt = $pdo->prepare("
+            SELECT TIMESTAMPDIFF(SECOND, `last_location_updated_at`, NOW()) AS `diff`
+            FROM `delivery_boys`
+            WHERE `id` = ?
+        ");
+        $stmt->execute([$id]);
+        $diff = $stmt->fetchColumn();
+        if ($diff === false || $diff === null) {
+            return true;
+        }
+        return (int)$diff > $thresholdSeconds;
+    }
 }

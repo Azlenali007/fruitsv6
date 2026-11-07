@@ -5,9 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Delivery History - Partner Panel</title>
     <link rel="icon" type="image/svg+xml" href="/assets/images/favicon.svg">
-    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="manifest" href="/manifest-delboy.webmanifest">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NA Rider">
+    <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
     <meta name="theme-color" content="#064e3b">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw-delboy.js', { scope: '/' }).catch(() => {});
+        });
+    }
+    </script>
     <style>[x-cloak] { display: none !important; }</style>
 </head>
 <body class="h-full bg-slate-950 text-slate-100 font-sans antialiased pb-24">
