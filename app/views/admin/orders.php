@@ -125,7 +125,23 @@ $totalPages = ceil($totalOrdersCount / $limit);
                     <?php foreach ($orders as $o): ?>
                     <tr class="hover:bg-gray-50/70 transition">
                         <td class="py-3.5 px-4 font-bold text-gray-900">
-                            #<?= e($o['order_number']) ?>
+                            <div>#<?= e($o['order_number']) ?></div>
+                            <?php 
+                            $ostore = $o['store_type'] ?? 'coconut';
+                            $ostoreBadge = [
+                                'coconut' => 'bg-emerald-100 text-emerald-800',
+                                'juice' => 'bg-orange-100 text-orange-800',
+                                'mixed' => 'bg-purple-100 text-purple-800'
+                            ][$ostore] ?? 'bg-gray-100 text-gray-800';
+                            $ostoreIcon = [
+                                'coconut' => '🥥 Coconut',
+                                'juice' => '🍹 Juice',
+                                'mixed' => '🥥🍹 Mixed'
+                            ][$ostore] ?? '🥥 Coconut';
+                            ?>
+                            <span class="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black <?= $ostoreBadge ?>">
+                                <?= $ostoreIcon ?>
+                            </span>
                         </td>
                         <td class="py-3.5 px-4 text-gray-500 whitespace-nowrap">
                             <?= date('d M Y, h:i A', strtotime($o['created_at'])) ?>

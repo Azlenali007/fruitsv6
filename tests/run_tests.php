@@ -223,6 +223,14 @@ require_once __DIR__ . '/test_loyalty_and_delboy_pwa.php';
 $passCount += $pwaPass;
 $failCount += $pwaFail;
 
+// ---------------------------------------------------------
+// 18. PREMIUM DUAL STORE EXPERIENCE SUITE (COCONUT & JUICE)
+// ---------------------------------------------------------
+echo "\n";
+require_once __DIR__ . '/test_dual_store_experience.php';
+$passCount += $dualPass;
+$failCount += $dualFail;
+
 echo "\n========================================================\n";
 echo "OVERALL SYSTEM SUMMARY: {$passCount} PASSED, {$failCount} FAILED\n";
 echo "========================================================\n";

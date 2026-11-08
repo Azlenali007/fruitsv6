@@ -90,5 +90,6 @@ require_once __DIR__ . '/services/DeliveryBoyAuthService.php';
 require_once __DIR__ . '/services/DeliveryDispatchService.php';
 require_once __DIR__ . '/services/AnalyticsService.php';
 require_once __DIR__ . '/services/LoyaltyService.php';
+require_once __DIR__ . '/services/StoreService.php';
 
 

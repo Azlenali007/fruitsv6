@@ -145,14 +145,18 @@ try {
         case '/':
         case '/index.html':
         case '/index.php':
-            $product = Product::getPrimary();
+            $currentStore = StoreService::getCurrentStore();
+            $storeMeta = StoreService::getStoreMeta($currentStore);
+            $storeProducts = StoreService::getStoreProducts($currentStore, 12);
+            $storeCategories = StoreService::getStoreCategories($currentStore);
+            $product = !empty($storeProducts) ? $storeProducts[0] : Product::getPrimary();
             if (!$product) {
                 // If product is missing, self-seed default product if database tables exist
                 try {
                     $pdo = Database::getConnection();
                     $stmtProd = $pdo->prepare("
-                        INSERT INTO `products` (`name`, `slug`, `tagline`, `description`, `price`, `stock_quantity`, `is_available`, `image_url`)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO `products` (`name`, `slug`, `tagline`, `description`, `price`, `stock_quantity`, `is_available`, `image_url`, `store_type`)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ");
                     $stmtProd->execute([
                         'Fresh Coconut Water',
@@ -162,7 +166,8 @@ try {
                         40.00,
                         150,
                         1,
-                        '/assets/images/product-main.png'
+                        '/assets/images/product-main.png',
+                        'coconut'
                     ]);
                     $product = Product::getPrimary();
                 } catch (Exception $e) {
@@ -173,7 +178,9 @@ try {
             break;
 
         case '/shop':
-            $categories = Category::getAll(true);
+            $currentStore = StoreService::getCurrentStore();
+            $storeMeta = StoreService::getStoreMeta($currentStore);
+            $categories = Category::getAll(true, $currentStore);
             $selectedCategory = isset($_GET['cat']) ? trim($_GET['cat']) : 'all';
             $search = trim($_GET['q'] ?? '');
             $catId = null;
@@ -183,8 +190,8 @@ try {
                     $catId = (int)$cObj['id'];
                 }
             }
-            $products = ($selectedCategory === 'combos') ? [] : Product::getAll(true, $catId, $search);
-            $combos = ($selectedCategory === 'all' || $selectedCategory === 'combos') ? Combo::getAll(true) : [];
+            $products = ($selectedCategory === 'combos') ? [] : Product::getAll(true, $catId, $search, $currentStore);
+            $combos = ($currentStore === 'coconut' && ($selectedCategory === 'all' || $selectedCategory === 'combos')) ? Combo::getAll(true) : [];
             require __DIR__ . '/../app/views/shop.php';
             break;
 
@@ -1320,7 +1327,8 @@ try {
                     'is_featured' => isset($_POST['is_featured']) ? 1 : 0,
                     'has_cutting_options' => isset($_POST['has_cutting_options']) ? 1 : 0,
                     'cutting_options_json' => !empty($_POST['cutting_options_json']) ? $_POST['cutting_options_json'] : null,
-                    'image_url' => $imageUrl
+                    'image_url' => $imageUrl,
+                    'store_type' => in_array($_POST['store_type'] ?? '', ['coconut', 'juice']) ? $_POST['store_type'] : 'coconut'
                 ];
 
                 Product::create($createData);
@@ -1365,6 +1373,7 @@ try {
                 }
 
                 $updateData = [
+                    'store_type' => in_array($_POST['store_type'] ?? '', ['coconut', 'juice']) ? $_POST['store_type'] : 'coconut',
                     'category_id' => !empty($_POST['category_id']) ? (int)$_POST['category_id'] : null,
                     'name' => trim($_POST['name'] ?? ''),
                     'slug' => trim($_POST['slug'] ?? ''),
@@ -1423,7 +1432,8 @@ try {
                     'slug' => trim($_POST['slug'] ?? ''),
                     'description' => trim($_POST['description'] ?? ''),
                     'sort_order' => (int)($_POST['sort_order'] ?? 0),
-                    'is_active' => isset($_POST['is_active']) ? 1 : 0
+                    'is_active' => isset($_POST['is_active']) ? 1 : 0,
+                    'store_type' => in_array($_POST['store_type'] ?? '', ['coconut', 'juice']) ? $_POST['store_type'] : 'coconut'
                 ];
 
                 if ($catId > 0) {
@@ -1723,6 +1733,12 @@ try {
                     'whatsapp_popup_message' => trim($_POST['whatsapp_popup_message'] ?? 'Stay updated with fresh daily harvest arrivals, exclusive seasonal offers, and health tips!'),
                     'whatsapp_popup_button_text' => trim($_POST['whatsapp_popup_button_text'] ?? 'Join WhatsApp Channel'),
                     'whatsapp_popup_frequency' => in_array($_POST['whatsapp_popup_frequency'] ?? '', ['session', 'daily', 'weekly', 'always']) ? $_POST['whatsapp_popup_frequency'] : 'session',
+                    'juice_store_enabled' => isset($_POST['juice_store_enabled']) ? '1' : '0',
+                    'store_switch_button_enabled' => isset($_POST['store_switch_button_enabled']) ? '1' : '0',
+                    'switch_to_juice_text' => trim($_POST['switch_to_juice_text'] ?? 'Looking for Juice? 🍹'),
+                    'switch_to_coconut_text' => trim($_POST['switch_to_coconut_text'] ?? 'Looking for Coconut? 🥥'),
+                    'juice_store_name' => trim($_POST['juice_store_name'] ?? 'N.A Fresh Fruit Juices & Shakes'),
+                    'juice_store_tagline' => trim($_POST['juice_store_tagline'] ?? '100% Pure Cold-Pressed Juices & Shakes'),
                 ];
 
                 Setting::setMany($settingsData);
@@ -2239,6 +2255,80 @@ try {
                 json_response($res, $res['valid'] ? 200 : 400);
             }
             json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        // ------------------------------------------------
+        // Dual Store & Quick Ordering APIs
+        // ------------------------------------------------
+        case '/api/store/switch':
+            $raw = file_get_contents('php://input');
+            $input = json_decode($raw, true) ?? $_POST;
+            $targetStore = strtolower(trim($input['store'] ?? $_GET['store'] ?? 'coconut'));
+            if (!in_array($targetStore, ['coconut', 'juice'], true)) {
+                $targetStore = 'coconut';
+            }
+            StoreService::setStore($targetStore);
+            $storeMeta = StoreService::getStoreMeta($targetStore);
+            json_response([
+                'success' => true,
+                'store' => $targetStore,
+                'store_meta' => $storeMeta,
+                'redirect_url' => '/?store=' . $targetStore
+            ]);
+            break;
+
+        case '/api/cart/stats':
+            $cart = CartService::getCart();
+            json_response([
+                'success' => true,
+                'count' => (int)$cart['count'],
+                'subtotal' => (float)$cart['subtotal'],
+                'formatted_subtotal' => $cart['formatted_subtotal']
+            ]);
+            break;
+
+        case '/api/cart/quick-update':
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $productId = (int)($input['product_id'] ?? $_POST['product_id'] ?? 0);
+                $quantity = max(0, (int)($input['quantity'] ?? $_POST['quantity'] ?? 0));
+                $optionId = !empty($input['option_id']) ? trim($input['option_id']) : (!empty($_POST['option_id']) ? trim($_POST['option_id']) : null);
+
+                $res = CartService::quickSetQuantity($productId, $quantity, $optionId);
+                $cart = CartService::getCart();
+                json_response([
+                    'success' => $res['success'],
+                    'error' => $res['error'] ?? null,
+                    'count' => (int)$cart['count'],
+                    'subtotal' => (float)$cart['subtotal'],
+                    'formatted_subtotal' => $cart['formatted_subtotal'],
+                    'quantity' => $quantity,
+                    'product_id' => $productId
+                ], $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
+
+        case '/api/cart/reorder':
+            if ($method === 'POST') {
+                $raw = file_get_contents('php://input');
+                $input = json_decode($raw, true) ?? $_POST;
+                $orderId = (int)($input['order_id'] ?? $_POST['order_id'] ?? 0);
+                $customerId = CustomerAuthService::check() ? (int)CustomerAuthService::user()['id'] : null;
+                $res = CartService::reorderFromOrder($orderId, $customerId);
+                $cart = CartService::getCart();
+                json_response([
+                    'success' => $res['success'],
+                    'error' => $res['error'] ?? null,
+                    'message' => $res['message'] ?? '',
+                    'count' => (int)$cart['count'],
+                    'subtotal' => (float)$cart['subtotal'],
+                    'formatted_subtotal' => $cart['formatted_subtotal']
+                ], $res['success'] ? 200 : 400);
+            }
+            json_response(['success' => false, 'error' => 'Method not allowed'], 405);
+            break;
             break;
 
         // Admin Loyalty Management Routes

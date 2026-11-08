@@ -29,6 +29,10 @@ class Product {
         return self::formatProduct($prod ?: null);
     }
 
+    public static function find(int $id): ?array {
+        return self::getById($id);
+    }
+
     public static function getBySlug(string $slug): ?array {
         $pdo = Database::getConnection();
         $stmt = $pdo->prepare("SELECT p.*, c.name AS category_name, c.slug AS category_slug FROM `products` p LEFT JOIN `categories` c ON c.id = p.category_id WHERE p.`slug` = ? LIMIT 1");
@@ -38,7 +42,7 @@ class Product {
         return self::formatProduct($prod ?: null);
     }
 
-    public static function getAll(bool $activeOnly = false, ?int $categoryId = null, ?string $search = null): array {
+    public static function getAll(bool $activeOnly = false, ?int $categoryId = null, ?string $search = null, ?string $storeType = null): array {
         $pdo = Database::getConnection();
         $sql = "SELECT p.*, c.name AS category_name, c.slug AS category_slug 
                 FROM `products` p 
@@ -48,6 +52,11 @@ class Product {
 
         if ($activeOnly) {
             $where[] = "p.`is_available` = 1 AND p.`stock_quantity` > 0";
+        }
+
+        if ($storeType !== null && $storeType !== '' && $storeType !== 'all') {
+            $where[] = "p.`store_type` = ?";
+            $params[] = $storeType;
         }
 
         if ($categoryId !== null && $categoryId > 0) {
@@ -85,13 +94,14 @@ class Product {
         $name = trim($data['name'] ?? '');
         $slug = trim($data['slug'] ?? '') ?: Category::slugify($name);
         $categoryId = !empty($data['category_id']) ? (int)$data['category_id'] : null;
+        $storeType = !empty($data['store_type']) && in_array($data['store_type'], ['coconut', 'juice']) ? $data['store_type'] : 'coconut';
         $tagline = trim($data['tagline'] ?? '');
         $description = trim($data['description'] ?? '');
         $price = max(0.00, (float)($data['price'] ?? 0));
         $originalPrice = !empty($data['original_price']) ? (float)$data['original_price'] : null;
         $stock = max(0, (int)($data['stock_quantity'] ?? 0));
         $isAvailable = !empty($data['is_available']) ? 1 : 0;
-        $imageUrl = trim($data['image_url'] ?? '') ?: '/assets/images/product-main.png';
+        $imageUrl = trim($data['image_url'] ?? '') ?: ($storeType === 'juice' ? '/assets/images/juice/mosambi-juice.jpg' : '/assets/images/product-main.png');
         $galleryJson = !empty($data['gallery_json']) ? $data['gallery_json'] : json_encode([$imageUrl]);
         $hasCutting = !empty($data['has_cutting_options']) ? 1 : 0;
         $cuttingJson = !empty($data['cutting_options_json']) ? $data['cutting_options_json'] : null;
@@ -99,13 +109,13 @@ class Product {
 
         $stmt = $pdo->prepare("
             INSERT INTO `products` (
-                `category_id`, `name`, `slug`, `tagline`, `description`,
+                `category_id`, `store_type`, `name`, `slug`, `tagline`, `description`,
                 `price`, `original_price`, `stock_quantity`, `is_available`,
                 `has_cutting_options`, `cutting_options_json`, `image_url`, `gallery_json`, `sort_order`
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
-            $categoryId, $name, $slug, $tagline, $description,
+            $categoryId, $storeType, $name, $slug, $tagline, $description,
             $price, $originalPrice, $stock, $isAvailable,
             $hasCutting, $cuttingJson, $imageUrl, $galleryJson, $sortOrder
         ]);
@@ -119,7 +129,7 @@ class Product {
         $values = [];
 
         $allowedFields = [
-            'category_id', 'name', 'slug', 'tagline', 'description',
+            'category_id', 'store_type', 'name', 'slug', 'tagline', 'description',
             'price', 'original_price', 'stock_quantity', 'is_available',
             'has_cutting_options', 'cutting_options_json', 'image_url', 'gallery_json', 'sort_order'
         ];

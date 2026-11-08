@@ -5,15 +5,29 @@
  */
 
 class Category {
-    public static function getAll(bool $activeOnly = true): array {
+    public static function getAll(bool $activeOnly = true, ?string $storeType = null): array {
         $pdo = Database::getConnection();
         $sql = "SELECT c.*, (SELECT COUNT(*) FROM `products` p WHERE p.category_id = c.id AND p.is_available = 1) AS product_count 
                 FROM `categories` c";
+        $where = [];
+        $params = [];
+
         if ($activeOnly) {
-            $sql .= " WHERE c.`is_active` = 1";
+            $where[] = "c.`is_active` = 1";
         }
+
+        if ($storeType !== null && $storeType !== '' && $storeType !== 'all') {
+            $where[] = "c.`store_type` = ?";
+            $params[] = $storeType;
+        }
+
+        if (!empty($where)) {
+            $sql .= " WHERE " . implode(' AND ', $where);
+        }
+
         $sql .= " ORDER BY c.`sort_order` ASC, c.`id` ASC";
-        $stmt = $pdo->query($sql);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
 
@@ -37,15 +51,16 @@ class Category {
         $pdo = Database::getConnection();
         $name = trim($data['name'] ?? '');
         $slug = trim($data['slug'] ?? '') ?: self::slugify($name);
+        $storeType = !empty($data['store_type']) && in_array($data['store_type'], ['coconut', 'juice']) ? $data['store_type'] : 'coconut';
         $description = trim($data['description'] ?? '');
         $sortOrder = (int)($data['sort_order'] ?? 0);
         $isActive = !empty($data['is_active']) ? 1 : 0;
 
         $stmt = $pdo->prepare("
-            INSERT INTO `categories` (`name`, `slug`, `description`, `sort_order`, `is_active`)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO `categories` (`name`, `slug`, `store_type`, `description`, `sort_order`, `is_active`)
+            VALUES (?, ?, ?, ?, ?, ?)
         ");
-        $stmt->execute([$name, $slug, $description, $sortOrder, $isActive]);
+        $stmt->execute([$name, $slug, $storeType, $description, $sortOrder, $isActive]);
         return (int)$pdo->lastInsertId();
     }
 
@@ -56,13 +71,14 @@ class Category {
         $description = trim($data['description'] ?? '');
         $sortOrder = (int)($data['sort_order'] ?? 0);
         $isActive = !empty($data['is_active']) ? 1 : 0;
+        $storeType = !empty($data['store_type']) && in_array($data['store_type'], ['coconut', 'juice']) ? $data['store_type'] : 'coconut';
 
         $stmt = $pdo->prepare("
             UPDATE `categories` 
-            SET `name` = ?, `slug` = ?, `description` = ?, `sort_order` = ?, `is_active` = ?
+            SET `name` = ?, `slug` = ?, `store_type` = ?, `description` = ?, `sort_order` = ?, `is_active` = ?
             WHERE `id` = ?
         ");
-        return $stmt->execute([$name, $slug, $description, $sortOrder, $isActive, $id]);
+        return $stmt->execute([$name, $slug, $storeType, $description, $sortOrder, $isActive, $id]);
     }
 
     public static function delete(int $id): bool {

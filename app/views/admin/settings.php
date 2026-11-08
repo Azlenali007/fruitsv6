@@ -325,6 +325,93 @@ $settings = Setting::getAll();
         </div>
 
 
+        <!-- Dual Store Experience Settings (Coconut Store + Juice Store) -->
+        <div class="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-5">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl p-2 rounded-xl bg-orange-100 text-orange-800">🍹🥥</span>
+                <div>
+                    <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Dual Store Experience Settings</h2>
+                    <p class="text-xs text-gray-500">Configure Coconut Store (Default) and Switchable Juice Store</p>
+                </div>
+            </div>
+
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <label class="flex items-start gap-3 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            name="juice_store_enabled" 
+                            value="1" 
+                            <?= ($settings['juice_store_enabled'] ?? '1') === '1' ? 'checked' : '' ?>
+                            class="w-4 h-4 text-brand-600 rounded-sm focus:ring-brand-500 mt-0.5"
+                        >
+                        <div>
+                            <span class="font-bold text-xs text-gray-900 block">Enable Juice Store Experience</span>
+                            <span class="text-[11px] text-gray-500">Allow customers to access the dedicated fresh juice store.</span>
+                        </div>
+                    </label>
+
+                    <label class="flex items-start gap-3 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            name="store_switch_button_enabled" 
+                            value="1" 
+                            <?= ($settings['store_switch_button_enabled'] ?? '1') === '1' ? 'checked' : '' ?>
+                            class="w-4 h-4 text-brand-600 rounded-sm focus:ring-brand-500 mt-0.5"
+                        >
+                        <div>
+                            <span class="font-bold text-xs text-gray-900 block">Show Store Switch Button</span>
+                            <span class="text-[11px] text-gray-500">Display prominent store switching control in header and homepage.</span>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Switch to Juice Button Text</label>
+                        <input 
+                            type="text" 
+                            name="switch_to_juice_text" 
+                            value="<?= e($settings['switch_to_juice_text'] ?? 'Looking for Juice? 🍹') ?>" 
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                        >
+                        <span class="text-[10px] text-gray-400 mt-1 block">Displayed throughout the Coconut Store</span>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Switch to Coconut Button Text</label>
+                        <input 
+                            type="text" 
+                            name="switch_to_coconut_text" 
+                            value="<?= e($settings['switch_to_coconut_text'] ?? 'Looking for Coconut? 🥥') ?>" 
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                        >
+                        <span class="text-[10px] text-gray-400 mt-1 block">Displayed throughout the Juice Store</span>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Juice Store Brand Name</label>
+                        <input 
+                            type="text" 
+                            name="juice_store_name" 
+                            value="<?= e($settings['juice_store_name'] ?? 'N.A Fresh Fruit Juices & Shakes') ?>" 
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                        >
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-gray-700 uppercase mb-1">Juice Store Tagline</label>
+                        <input 
+                            type="text" 
+                            name="juice_store_tagline" 
+                            value="<?= e($settings['juice_store_tagline'] ?? '100% Pure Cold-Pressed Juices & Shakes') ?>" 
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                        >
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="flex justify-end">
             <button type="submit" class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-3 px-6 rounded-xl shadow-xs transition">
                 Save All Settings

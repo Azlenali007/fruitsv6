@@ -1,15 +1,26 @@
 <?php
 /**
- * Multi-Product Shop View
+ * Multi-Product Shop View - Dual Store (Coconut Store & Juice Store)
  * N.A Fresh Fruits & Coconuts
- * Supports category tabs, search, combo showcase, preparation / cutting options modal,
- * and live cart integration.
  */
-$pageTitle = 'Shop Fresh Coconuts & Fruit Delights - N.A Fresh Fruits & Coconuts';
+$currentStore = StoreService::getCurrentStore();
+$storeMeta = StoreService::getStoreMeta($currentStore);
+$isJuiceMode = ($currentStore === 'juice');
+
+$pageTitle = $isJuiceMode 
+    ? 'Juice Bar Menu - 100% Pure Cold-Pressed Juices & Shakes' 
+    : 'Shop Fresh Coconuts & Farm Delights - N.A Fresh Fruits';
+
 $activePage = 'shop';
 require_once __DIR__ . '/layouts/header.php';
 
 $cart = CartService::getCart();
+$cartItemMap = [];
+foreach ($cart['items'] as $item) {
+    if (!empty($item['product_id'])) {
+        $cartItemMap[(int)$item['product_id']] = (int)$item['quantity'];
+    }
+}
 ?>
 
 <div class="max-w-6xl mx-auto px-4 py-4 sm:py-8 space-y-8" x-data="{
@@ -50,9 +61,13 @@ $cart = CartService::getCart();
                 <a href="/" class="p-1 -ml-1 text-gray-500 hover:text-brand-600 transition" aria-label="Back">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                 </a>
-                <h1 class="text-2xl sm:text-3xl font-extrabold text-gray-950 tracking-tight">Our Farm Fresh Store</h1>
+                <h1 class="text-2xl sm:text-3xl font-extrabold text-gray-950 tracking-tight">
+                    <?= $isJuiceMode ? 'Fresh Cold-Pressed Juice Bar' : 'Our Farm Fresh Store' ?>
+                </h1>
             </div>
-            <p class="text-xs sm:text-sm text-gray-500">100% natural coastal coconuts, pure scooped malai & freshly pressed juices</p>
+            <p class="text-xs sm:text-sm text-gray-500">
+                <?= $isJuiceMode ? '100% natural cold-pressed juices, pure citrus coolers & creamy shakes in Jaora' : '100% natural coastal coconuts, pure scooped malai & farm-fresh delights' ?>
+            </p>
         </div>
 
         <!-- Search Bar -->
@@ -249,30 +264,51 @@ $cart = CartService::getCart();
                         </span>
                     </div>
 
-                    <?php if (!empty($p['has_cutting_options']) && !empty($p['cutting_options'])): ?>
+                    <?php 
+                    $pid = (int)$p['id'];
+                    $currentQty = $cartItemMap[$pid] ?? 0;
+                    if (!empty($p['has_cutting_options']) && !empty($p['cutting_options'])): 
+                    ?>
                     <!-- Open Cutting & Preparation Options Modal -->
                     <button 
                         type="button" 
                         @click="openOptionModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)"
-                        class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-3 rounded-xl transition shadow-xs flex items-center justify-center gap-2"
+                        class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-3 rounded-xl transition shadow-xs flex items-center justify-center gap-2 active:scale-95"
                     >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path></svg>
-                        <span>Select Preparation & Add</span>
+                        <span>Select Options & Add</span>
                     </button>
                     <?php else: ?>
-                    <!-- Standard Direct Add -->
-                    <form action="/cart/add" method="POST">
-                        <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
-                        <input type="hidden" name="product_id" value="<?= (int)$p['id'] ?>">
-                        <input type="hidden" name="quantity" value="1">
+                    <!-- Fast 1-Tap Ordering Stepper Component -->
+                    <div class="product-ordering-actions" data-product-id="<?= $pid ?>">
                         <button 
-                            type="submit" 
-                            class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-3 rounded-xl transition shadow-xs flex items-center justify-center gap-2"
+                            type="button" 
+                            data-quick-add 
+                            data-product-id="<?= $pid ?>" 
+                            class="product-initial-add-btn w-full bg-brand-600 hover:bg-brand-700 text-white font-extrabold text-xs py-2.5 px-3 rounded-xl transition shadow-2xs flex items-center justify-center gap-1.5 active:scale-95 <?= ($currentQty > 0) ? 'hidden' : '' ?>"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 0 0-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 0 0-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
                             <span>Add to Cart</span>
                         </button>
-                    </form>
+
+                        <div class="product-qty-stepper flex items-center justify-between bg-brand-50 border border-brand-200 rounded-xl p-1 <?= ($currentQty > 0) ? '' : 'hidden' ?>">
+                            <button 
+                                type="button" 
+                                data-quick-step="-1" 
+                                data-product-id="<?= $pid ?>" 
+                                class="w-8 h-8 rounded-lg bg-white text-brand-700 hover:bg-brand-100 flex items-center justify-center font-black text-sm shadow-2xs active:scale-90"
+                                aria-label="Decrease quantity"
+                            >&minus;</button>
+                            <span class="product-qty-value font-black text-xs text-brand-900 px-3"><?= $currentQty ?></span>
+                            <button 
+                                type="button" 
+                                data-quick-step="1" 
+                                data-product-id="<?= $pid ?>" 
+                                class="w-8 h-8 rounded-lg bg-brand-600 text-white hover:bg-brand-700 flex items-center justify-center font-black text-sm shadow-2xs active:scale-90"
+                                aria-label="Increase quantity"
+                            >&plus;</button>
+                        </div>
+                    </div>
                     <?php endif; ?>
                 </div>
             </div>
@@ -280,6 +316,27 @@ $cart = CartService::getCart();
         </div>
         <?php endif; ?>
     </section>
+    <?php endif; ?>
+
+    <!-- Dual Store In-Page Switcher Banner -->
+    <?php if (StoreService::isSwitchButtonEnabled()): ?>
+    <div class="rounded-3xl p-6 sm:p-7 shadow-xs border <?= $isJuiceMode ? 'bg-gradient-to-r from-emerald-900 to-green-950 text-white border-emerald-800' : 'bg-gradient-to-r from-orange-950 to-amber-950 text-white border-orange-900' ?> flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5 text-center sm:text-left">
+            <span class="text-3xl p-2 rounded-2xl bg-white/10 shrink-0"><?= $isJuiceMode ? '🥥' : '🍹' ?></span>
+            <div>
+                <span class="text-[10px] font-black uppercase tracking-widest text-amber-300 block"><?= $isJuiceMode ? 'Switch Store' : 'Juice Bar' ?></span>
+                <h4 class="text-base sm:text-lg font-black text-white"><?= $isJuiceMode ? 'Craving Tender Coconut Water?' : 'Thirsty for Cold-Pressed Juices & Shakes?' ?></h4>
+                <p class="text-xs text-white/80"><?= $isJuiceMode ? 'Switch to our Coconut Store for fresh coastal coconuts and scraped malai.' : 'Discover our complete Juice Bar with freshly pressed fruit extracts and thick shakes.' ?></p>
+            </div>
+        </div>
+        <button 
+            type="button" 
+            data-switch-store="<?= $isJuiceMode ? 'coconut' : 'juice' ?>" 
+            class="store-switch-btn shrink-0 px-5 py-2.5 rounded-xl text-xs font-black transition active:scale-95 shadow-md <?= $isJuiceMode ? 'bg-emerald-500 hover:bg-emerald-400 text-gray-950' : 'bg-orange-500 hover:bg-orange-400 text-gray-950' ?>"
+        >
+            <?= $isJuiceMode ? 'Looking for Coconut? 🥥' : 'Looking for Juice? 🍹' ?>
+        </button>
+    </div>
     <?php endif; ?>
 
     <!-- Interactive Coconut Cutting & Preparation Selection Modal (User Requirement C) -->

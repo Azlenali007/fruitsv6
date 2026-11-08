@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 const PORT = Number(process.env.PORT) || 3000;
-const PHP_PORT = 8080;
+const PHP_PORT = 8088;
 const PHP_HOST = '127.0.0.1';
 const PHP_BIN = fs.existsSync('/usr/bin/php') ? '/usr/bin/php' : 'php';
 

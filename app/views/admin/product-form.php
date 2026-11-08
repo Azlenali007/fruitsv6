@@ -70,6 +70,18 @@ $gallery = $isEdit ? ($product['gallery'] ?? []) : [];
                 </div>
 
                 <div>
+                    <label class="block font-bold text-gray-700 uppercase mb-1">Target Store *</label>
+                    <select 
+                        name="store_type" 
+                        required
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                    >
+                        <option value="coconut" <?= ($isEdit && ($product['store_type'] ?? 'coconut') === 'coconut') ? 'selected' : '' ?>>🥥 Coconut Store (Default)</option>
+                        <option value="juice" <?= ($isEdit && ($product['store_type'] ?? 'coconut') === 'juice') ? 'selected' : '' ?>>🍹 Juice Store</option>
+                    </select>
+                </div>
+
+                <div>
                     <label class="block font-bold text-gray-700 uppercase mb-1">Category *</label>
                     <select 
                         name="category_id" 
@@ -79,7 +91,7 @@ $gallery = $isEdit ? ($product['gallery'] ?? []) : [];
                         <option value="">Select a Category</option>
                         <?php foreach ($categories as $cat): ?>
                         <option value="<?= $cat['id'] ?>" <?= ($isEdit && (int)($product['category_id'] ?? 0) === (int)$cat['id']) ? 'selected' : '' ?>>
-                            <?= e($cat['name']) ?>
+                            [<?= ($cat['store_type'] ?? 'coconut') === 'juice' ? '🍹 Juice' : '🥥 Coconut' ?>] <?= e($cat['name']) ?>
                         </option>
                         <?php endforeach; ?>
                     </select>

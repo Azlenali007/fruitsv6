@@ -7,11 +7,16 @@ $adminTitle = 'Product & Stock Management - N.A Fresh Fruits & Coconuts';
 $activeAdminTab = 'products';
 require_once __DIR__ . '/layout-header.php';
 
+$storeFilter = isset($_GET['store']) && in_array($_GET['store'], ['coconut', 'juice']) ? $_GET['store'] : 'all';
 $categoryId = isset($_GET['category']) && is_numeric($_GET['category']) ? (int)$_GET['category'] : null;
 $search = trim($_GET['q'] ?? '');
 
-$categories = Category::getAll(false);
-$products = Product::getAll(false, $categoryId, $search);
+$categories = Category::getAll(false, $storeFilter === 'all' ? null : $storeFilter);
+$products = Product::getAll(false, $categoryId, $search, $storeFilter === 'all' ? null : $storeFilter);
+
+$countAll = count(Product::getAll(false));
+$countCoconut = count(Product::getAll(false, null, null, 'coconut'));
+$countJuice = count(Product::getAll(false, null, null, 'juice'));
 ?>
 
 <div class="max-w-6xl mx-auto space-y-6">
@@ -20,7 +25,7 @@ $products = Product::getAll(false, $categoryId, $search);
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <h1 class="text-2xl font-black text-gray-900 tracking-tight">Products & Catalog</h1>
-            <p class="text-xs text-gray-500">Manage all products, categories, selling prices, stock and cutting options</p>
+            <p class="text-xs text-gray-500">Manage all products, categories, selling prices, stock and cutting options across stores</p>
         </div>
 
         <div class="flex items-center gap-2">
@@ -39,18 +44,42 @@ $products = Product::getAll(false, $categoryId, $search);
         </div>
     </div>
 
+    <!-- Store Selector Tabs -->
+    <div class="flex items-center gap-2 border-b border-gray-200 pb-2">
+        <a 
+            href="/admin/products<?= !empty($search) ? '?q=' . urlencode($search) : '' ?>" 
+            class="px-4 py-2 rounded-xl text-xs font-black transition <?= $storeFilter === 'all' ? 'bg-gray-900 text-white shadow-xs' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200' ?>"
+        >
+            All Stores (<?= $countAll ?>)
+        </a>
+        <a 
+            href="/admin/products?store=coconut<?= !empty($search) ? '&q=' . urlencode($search) : '' ?>" 
+            class="px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 <?= $storeFilter === 'coconut' ? 'bg-emerald-700 text-white shadow-xs' : 'bg-white text-emerald-800 hover:bg-emerald-50 border border-emerald-200' ?>"
+        >
+            <span>🥥</span>
+            <span>Coconut Store (<?= $countCoconut ?>)</span>
+        </a>
+        <a 
+            href="/admin/products?store=juice<?= !empty($search) ? '&q=' . urlencode($search) : '' ?>" 
+            class="px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 <?= $storeFilter === 'juice' ? 'bg-orange-600 text-white shadow-xs' : 'bg-white text-orange-800 hover:bg-orange-50 border border-orange-200' ?>"
+        >
+            <span>🍹</span>
+            <span>Juice Store (<?= $countJuice ?>)</span>
+        </a>
+    </div>
+
     <!-- Filters & Search -->
     <div class="bg-white rounded-2xl p-4 border border-gray-200/80 shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div class="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
             <a 
-                href="/admin/products" 
+                href="/admin/products<?= $storeFilter !== 'all' ? '?store=' . $storeFilter : '' ?>" 
                 class="px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition <?= $categoryId === null ? 'bg-brand-600 text-white shadow-2xs' : 'bg-gray-100 text-gray-600 hover:bg-gray-200' ?>"
             >
-                All Products (<?= count(Product::getAll(false)) ?>)
+                All Categories
             </a>
             <?php foreach ($categories as $cat): ?>
             <a 
-                href="/admin/products?category=<?= $cat['id'] ?>" 
+                href="/admin/products?<?= $storeFilter !== 'all' ? 'store=' . $storeFilter . '&' : '' ?>category=<?= $cat['id'] ?>" 
                 class="px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition <?= $categoryId === (int)$cat['id'] ? 'bg-brand-600 text-white shadow-2xs' : 'bg-gray-100 text-gray-600 hover:bg-gray-200' ?>"
             >
                 <?= e($cat['name']) ?> (<?= (int)$cat['product_count'] ?>)
@@ -112,9 +141,14 @@ $products = Product::getAll(false, $categoryId, $search);
                             </div>
                         </td>
                         <td class="py-3 px-3">
-                            <span class="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold text-[11px]">
-                                <?= e($p['category_name'] ?? 'Uncategorized') ?>
-                            </span>
+                            <div class="space-y-1">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black <?= ($p['store_type'] ?? 'coconut') === 'juice' ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800' ?>">
+                                    <?= ($p['store_type'] ?? 'coconut') === 'juice' ? '🍹 Juice' : '🥥 Coconut' ?>
+                                </span>
+                                <span class="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold text-[11px] block truncate">
+                                    <?= e($p['category_name'] ?? 'Uncategorized') ?>
+                                </span>
+                            </div>
                         </td>
                         <td class="py-3 px-3">
                             <div class="flex items-baseline gap-1.5">

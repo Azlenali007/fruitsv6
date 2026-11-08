@@ -458,6 +458,22 @@ try {
     }
     echo "Default coupons verified/seeded successfully.\n";
 
+    // Ensure Dual Store (Coconut & Juice) schema and seeds
+    $pdo->exec("ALTER TABLE `products` ADD COLUMN IF NOT EXISTS `store_type` ENUM('coconut', 'juice') NOT NULL DEFAULT 'coconut'");
+    $pdo->exec("ALTER TABLE `categories` ADD COLUMN IF NOT EXISTS `store_type` ENUM('coconut', 'juice') NOT NULL DEFAULT 'coconut'");
+    $pdo->exec("UPDATE `products` SET `store_type` = 'coconut' WHERE `store_type` IS NULL OR `store_type` = ''");
+    $pdo->exec("UPDATE `categories` SET `store_type` = 'coconut' WHERE `store_type` IS NULL OR `store_type` = ''");
+
+    $dualMigrationFile = __DIR__ . '/migrations/012_dual_store_coconut_and_juice.sql';
+    if (file_exists($dualMigrationFile)) {
+        $checkJuice = $pdo->query("SELECT COUNT(*) FROM `products` WHERE `store_type` = 'juice'")->fetchColumn();
+        if ((int)$checkJuice === 0) {
+            $sqlContent = file_get_contents($dualMigrationFile);
+            $pdo->exec($sqlContent);
+            echo "Dual Store (Juice products & categories) migrated successfully.\n";
+        }
+    }
+
     // Record installation lock file
     $lockData = json_encode([
         'installed_at' => date('Y-m-d H:i:s'),

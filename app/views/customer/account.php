@@ -343,6 +343,15 @@ $loyaltyThreshold = (int)Setting::get(LoyaltyService::SETTING_REDEMPTION_THRESHO
                             <?php endforeach; ?>
                         </span>
                         <div class="flex items-center gap-2 shrink-0">
+                            <button 
+                                type="button" 
+                                data-order-id="<?= (int)$order['id'] ?>" 
+                                class="buy-again-btn bg-brand-50 hover:bg-brand-100 text-brand-700 border border-brand-200 font-black text-[11px] px-2.5 py-1 rounded-lg inline-flex items-center gap-1 transition active:scale-95 shadow-2xs"
+                                title="Reorder items from this order"
+                            >
+                                <span>🔄</span>
+                                <span>Buy Again</span>
+                            </button>
                             <?php if ($order['order_status'] === 'delivered'): ?>
                             <a href="/account/orders/invoice/download?num=<?= urlencode($order['order_number']) ?>&h=<?= urlencode($order['tracking_hash']) ?>" class="text-emerald-700 hover:text-emerald-800 font-bold text-[11px] inline-flex items-center gap-1">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>

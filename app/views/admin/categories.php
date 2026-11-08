@@ -7,7 +7,12 @@ $adminTitle = 'Product Categories - N.A Fresh Fruits & Coconuts';
 $activeAdminTab = 'categories';
 require_once __DIR__ . '/layout-header.php';
 
-$categories = Category::getAll(false);
+$storeFilter = isset($_GET['store']) && in_array($_GET['store'], ['coconut', 'juice']) ? $_GET['store'] : 'all';
+$categories = Category::getAll(false, $storeFilter === 'all' ? null : $storeFilter);
+
+$countAll = count(Category::getAll(false));
+$countCoconut = count(Category::getAll(false, 'coconut'));
+$countJuice = count(Category::getAll(false, 'juice'));
 ?>
 
 <div class="max-w-4xl mx-auto space-y-6" x-data="{
@@ -17,6 +22,7 @@ $categories = Category::getAll(false);
     name: '',
     slug: '',
     description: '',
+    storeType: 'coconut',
     sortOrder: 0,
     isActive: true,
     openAdd() {
@@ -25,6 +31,7 @@ $categories = Category::getAll(false);
         this.name = '';
         this.slug = '';
         this.description = '';
+        this.storeType = '<?= $storeFilter === 'juice' ? 'juice' : 'coconut' ?>';
         this.sortOrder = <?= count($categories) + 1 ?>;
         this.isActive = true;
         this.showModal = true;
@@ -35,6 +42,7 @@ $categories = Category::getAll(false);
         this.name = cat.name;
         this.slug = cat.slug;
         this.description = cat.description || '';
+        this.storeType = cat.store_type || 'coconut';
         this.sortOrder = cat.sort_order;
         this.isActive = cat.is_active == 1;
         this.showModal = true;
@@ -44,7 +52,7 @@ $categories = Category::getAll(false);
     <div class="flex items-center justify-between">
         <div>
             <h1 class="text-2xl font-black text-gray-900 tracking-tight">Product Categories</h1>
-            <p class="text-xs text-gray-500">Organize your shop offerings into clear customer-friendly categories</p>
+            <p class="text-xs text-gray-500">Organize your shop offerings into clear customer-friendly categories across stores</p>
         </div>
 
         <button 
@@ -55,6 +63,30 @@ $categories = Category::getAll(false);
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
             <span>Add Category</span>
         </button>
+    </div>
+
+    <!-- Store Selector Tabs -->
+    <div class="flex items-center gap-2 border-b border-gray-200 pb-2">
+        <a 
+            href="/admin/categories" 
+            class="px-4 py-2 rounded-xl text-xs font-black transition <?= $storeFilter === 'all' ? 'bg-gray-900 text-white shadow-xs' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200' ?>"
+        >
+            All Categories (<?= $countAll ?>)
+        </a>
+        <a 
+            href="/admin/categories?store=coconut" 
+            class="px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 <?= $storeFilter === 'coconut' ? 'bg-emerald-700 text-white shadow-xs' : 'bg-white text-emerald-800 hover:bg-emerald-50 border border-emerald-200' ?>"
+        >
+            <span>🥥</span>
+            <span>Coconut Categories (<?= $countCoconut ?>)</span>
+        </a>
+        <a 
+            href="/admin/categories?store=juice" 
+            class="px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 <?= $storeFilter === 'juice' ? 'bg-orange-600 text-white shadow-xs' : 'bg-white text-orange-800 hover:bg-orange-50 border border-orange-200' ?>"
+        >
+            <span>🍹</span>
+            <span>Juice Categories (<?= $countJuice ?>)</span>
+        </a>
     </div>
 
     <!-- Category Table -->
@@ -74,9 +106,14 @@ $categories = Category::getAll(false);
                 <?php foreach ($categories as $cat): ?>
                 <tr class="hover:bg-gray-50/50 transition">
                     <td class="py-3 px-4 font-bold text-gray-900">
-                        <?= e($cat['name']) ?>
+                        <div class="flex items-center gap-2">
+                            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black <?= ($cat['store_type'] ?? 'coconut') === 'juice' ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800' ?>">
+                                <?= ($cat['store_type'] ?? 'coconut') === 'juice' ? '🍹 Juice' : '🥥 Coconut' ?>
+                            </span>
+                            <span><?= e($cat['name']) ?></span>
+                        </div>
                         <?php if (!empty($cat['description'])): ?>
-                            <span class="block font-normal text-[11px] text-gray-400"><?= e($cat['description']) ?></span>
+                            <span class="block font-normal text-[11px] text-gray-400 mt-0.5"><?= e($cat['description']) ?></span>
                         <?php endif; ?>
                     </td>
                     <td class="py-3 px-3 font-mono text-gray-500 text-[11px]">
@@ -142,6 +179,19 @@ $categories = Category::getAll(false);
             <form action="/admin/categories/save" method="POST" class="space-y-4 text-xs">
                 <input type="hidden" name="<?= CSRF_TOKEN_KEY ?>" value="<?= csrf_token() ?>">
                 <input type="hidden" name="category_id" :value="catId">
+
+                <div>
+                    <label class="block font-bold text-gray-700 uppercase mb-1">Target Store Experience *</label>
+                    <select 
+                        name="store_type" 
+                        x-model="storeType" 
+                        required 
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none"
+                    >
+                        <option value="coconut">🥥 Coconut Store (Default)</option>
+                        <option value="juice">🍹 Juice Store</option>
+                    </select>
+                </div>
 
                 <div>
                     <label class="block font-bold text-gray-700 uppercase mb-1">Category Name *</label>

@@ -1,15 +1,19 @@
 <?php
 /**
- * Footer Layout Component with Fixed Mobile Bottom Navigation
- * N.A Fresh Fruits & Coconuts
+ * Footer Layout Component with Fixed Mobile Bottom Navigation & Sticky Quick Ordering Bar
+ * N.A Fresh Fruits & Coconuts - Dual Store
  */
 $cartData = CartService::getCart();
 $cartCount = $cartData['count'];
 $activePage = $activePage ?? 'home';
-$storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
+
+$currentStore = StoreService::getCurrentStore();
+$storeMeta = StoreService::getStoreMeta($currentStore);
+$isJuiceMode = ($currentStore === 'juice');
+$storeName = $storeMeta['store_name'];
 $storePhone = Setting::get('store_phone', '+91 98765 43210');
 $storeEmail = Setting::get('store_email', 'contact@nafruitsandcoconuts.com');
-$storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, Bhopal, Madhya Pradesh - 462016');
+$storeAddress = Setting::get('store_address', 'Station Road, Opp. Bus Stand, Jaora, Ratlam, Madhya Pradesh - 457226');
 ?>
 </main>
 
@@ -20,6 +24,15 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
             <!-- Brand Column -->
             <div class="md:col-span-2 space-y-4">
                 <div class="flex items-center gap-2.5">
+                    <?php if ($isJuiceMode): ?>
+                    <div class="w-8 h-8 text-orange-600">
+                        <svg viewBox="0 0 48 48" fill="none" class="w-full h-full" stroke="currentColor">
+                            <path d="M14 12L17 40C17.2 41.8 18.8 43 20.6 43H27.4C29.2 43 30.8 41.8 31 40L34 12" stroke="#ea580c" stroke-width="3.5" stroke-linecap="round" fill="#ffedd5"/>
+                            <path d="M22 6L28 26" stroke="#f97316" stroke-width="3" stroke-linecap="round"/>
+                            <circle cx="33" cy="8" r="4" fill="#fb923c"/>
+                        </svg>
+                    </div>
+                    <?php else: ?>
                     <div class="w-8 h-8 text-brand-600">
                         <svg viewBox="0 0 48 48" fill="none" class="w-full h-full" stroke="currentColor">
                             <path d="M24 44V26" stroke="#235d3a" stroke-width="3.5" stroke-linecap="round"/>
@@ -28,14 +41,15 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
                             <circle cx="24" cy="24" r="2.5" fill="#235d3a"/>
                         </svg>
                     </div>
+                    <?php endif; ?>
                     <span class="font-bold text-xl text-gray-900"><?= e($storeName) ?></span>
                 </div>
                 <p class="text-sm text-gray-500 max-w-md leading-relaxed">
-                    Direct from nature, our fresh tender coconut water keeps you hydrated, healthy and energized. 100% natural, no added sugar, no chemicals. Just pure goodness.
+                    <?= $isJuiceMode ? '100% cold-pressed natural fruit juices, detox blends & rich seasonal milkshakes. No added sugar, no chemicals. Pure liquid goodness in Jaora.' : 'Direct from nature, our fresh tender coconut water keeps you hydrated, healthy and energized. 100% natural, no added sugar, no chemicals. Just pure goodness.' ?>
                 </p>
                 <div class="flex items-center gap-4 text-xs text-gray-500 pt-2">
-                    <span class="inline-flex items-center gap-1.5 text-brand-700 bg-brand-50 px-2.5 py-1 rounded-full font-medium">
-                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Open Daily: <?= e(Setting::get('store_open_time', '07:00 AM')) ?> - <?= e(Setting::get('store_close_time', '09:00 PM')) ?>
+                    <span class="inline-flex items-center gap-1.5 <?= $isJuiceMode ? 'text-orange-700 bg-orange-50' : 'text-brand-700 bg-brand-50' ?> px-2.5 py-1 rounded-full font-medium">
+                        <span class="w-2 h-2 rounded-full <?= $isJuiceMode ? 'bg-orange-500' : 'bg-emerald-500' ?>"></span> Open Daily: <?= e(Setting::get('store_open_time', '07:00 AM')) ?> - <?= e(Setting::get('store_close_time', '09:00 PM')) ?>
                     </span>
                 </div>
             </div>
@@ -45,8 +59,8 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
                 <h4 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Quick Links</h4>
                 <ul class="space-y-2.5 text-sm">
                     <li><a href="/" class="text-gray-600 hover:text-brand-600 transition">Home</a></li>
-                    <li><a href="/shop" class="text-gray-600 hover:text-brand-600 transition">Shop Coconut Water</a></li>
-                    <li><a href="/cart" class="text-gray-600 hover:text-brand-600 transition">Your Cart (<?= $cartCount ?>)</a></li>
+                    <li><a href="/shop" class="text-gray-600 hover:text-brand-600 transition"><?= $isJuiceMode ? 'Shop Fresh Juices' : 'Shop Coconut Water' ?></a></li>
+                    <li><a href="/cart" class="text-gray-600 hover:text-brand-600 transition">Your Cart (<span class="cart-count-badge"><?= $cartCount ?></span>)</a></li>
                     <li><a href="/track" class="text-gray-600 hover:text-brand-600 transition">Track Your Order</a></li>
                 </ul>
             </div>
@@ -73,13 +87,43 @@ $storeAddress = Setting::get('store_address', '123, Green Park, Near Main Road, 
 
         <div class="border-t border-gray-100 mt-8 pt-6 flex flex-col sm:flex-row justify-between items-center text-xs text-gray-400 gap-2">
             <p>&copy; <?= date('Y') ?> <?= e($storeName) ?>. All rights reserved.</p>
-            <p>100% Pure & Hygienic Tender Coconut Water</p>
+            <p><?= $isJuiceMode ? '100% Pure Cold-Pressed Juices & Shakes' : '100% Pure & Hygienic Tender Coconut Water' ?></p>
         </div>
     </div>
 </footer>
 
 <!-- Spacer to prevent content from hiding behind fixed bottom nav on mobile screens -->
 <div class="bottom-nav-spacer"></div>
+
+<!-- STICKY QUICK ORDERING BAR -->
+<div 
+    id="sticky-ordering-bar" 
+    class="fixed z-40 transition-all duration-300 transform <?= ($cartCount > 0 && !in_array($activePage, ['cart', 'checkout'])) ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none' ?> bottom-16 md:bottom-6 left-0 right-0 md:left-auto md:right-8 md:max-w-md px-3 md:px-0"
+>
+    <div class="bg-gray-900/95 backdrop-blur-md text-white rounded-2xl p-3 shadow-2xl border border-white/10 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-10 h-10 rounded-xl <?= $isJuiceMode ? 'bg-orange-500' : 'bg-emerald-600' ?> flex items-center justify-center text-white shrink-0 shadow-sm">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 0 0-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+            </div>
+            <div class="truncate">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-black text-white sticky-cart-items-count"><?= $cartCount ?> <?= ($cartCount === 1) ? 'Item' : 'Items' ?></span>
+                    <span class="text-[10px] text-gray-400">&bull;</span>
+                    <span class="text-xs font-extrabold text-amber-400 sticky-cart-subtotal">₹<?= number_format($cartData['subtotal']) ?></span>
+                </div>
+                <p class="text-[10px] text-gray-300 truncate">100% Fresh Doorstep Delivery in Jaora</p>
+            </div>
+        </div>
+
+        <a 
+            href="/cart" 
+            class="shrink-0 <?= $isJuiceMode ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600' : 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700' ?> text-white text-xs font-black px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-md active:scale-95"
+        >
+            <span>View Cart</span>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+        </a>
+    </div>
+</div>
 
 <!-- SECTION 5: FIXED MOBILE BOTTOM NAVIGATION -->
 <!-- Visible only on mobile/tablet viewports (< md), fixed to viewport bottom with safe area insets -->

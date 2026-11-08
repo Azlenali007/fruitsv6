@@ -95,10 +95,19 @@ $orders = Order::getByCustomerId($customerId);
                         Payment: <?= strtoupper($order['payment_method']) ?> (<?= ucfirst($order['payment_status']) ?>)
                     </span>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button 
+                        type="button" 
+                        data-order-id="<?= (int)$order['id'] ?>" 
+                        class="buy-again-btn bg-brand-50 hover:bg-brand-100 text-brand-700 border border-brand-200 font-bold text-xs py-2 px-3 rounded-xl transition inline-flex items-center gap-1.5 shadow-2xs active:scale-95"
+                        title="Reorder items from this order"
+                    >
+                        <span>🔄</span>
+                        <span>Buy Again</span>
+                    </button>
                     <a href="/account/orders/invoice/download?num=<?= urlencode($order['order_number']) ?>&h=<?= urlencode($order['tracking_hash']) ?>" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition inline-flex items-center gap-1 shadow-xs">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                        <span>Download Invoice</span>
+                        <span>Invoice</span>
                     </a>
                     <?php if ($order['order_status'] !== 'delivered'): ?>
                     <a href="/track?h=<?= urlencode($order['tracking_hash']) ?>" class="bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs py-2 px-4 rounded-xl transition inline-flex items-center gap-1 shadow-xs">

@@ -127,6 +127,7 @@ class CartService {
                     'preparation_option' => $optVal['option_name'],
                     'preparation_charge' => $optCharge,
                     'preparation_option_id' => $optVal['option_id'],
+                    'store_type' => $product['store_type'] ?? 'coconut',
                     'subtotal' => $lineTotal
                 ];
             }
@@ -485,6 +486,129 @@ class CartService {
             'coupon_calculation' => $appliedCoupon['calculation'] ?? null,
             'items' => $cart['items'],
             'count' => $cart['count']
+        ];
+    }
+
+    /**
+     * Quick Set Quantity for 1-tap card steppers (+ / -)
+     */
+    public static function quickSetQuantity(int $productId, int $quantity, ?string $optionId = null): array {
+        $product = Product::getById($productId);
+        if (!$product) {
+            return ['success' => false, 'error' => 'Product not found.'];
+        }
+
+        $optVal = Product::validateCuttingOption($product, $optionId);
+        $finalOptId = $optVal['option_id'];
+        $itemKey = self::makeProductKey($productId, $finalOptId);
+
+        if (!isset($_SESSION[self::SESSION_KEY]) || !is_array($_SESSION[self::SESSION_KEY])) {
+            $_SESSION[self::SESSION_KEY] = [];
+        }
+
+        if ($quantity <= 0) {
+            self::removeItem($itemKey);
+            $cart = self::getCart();
+            return [
+                'success' => true,
+                'product_id' => $productId,
+                'quantity' => 0,
+                'cart_count' => $cart['count'],
+                'cart_subtotal' => $cart['subtotal'],
+                'cart' => $cart
+            ];
+        }
+
+        if (!$product['is_available'] || (int)$product['stock_quantity'] <= 0) {
+            return ['success' => false, 'error' => 'This product is out of stock.'];
+        }
+
+        $cappedQty = min($quantity, (int)$product['stock_quantity']);
+        $_SESSION[self::SESSION_KEY][$itemKey] = [
+            'type' => 'product',
+            'id' => $productId,
+            'quantity' => $cappedQty,
+            'option_id' => $finalOptId
+        ];
+
+        $cart = self::getCart();
+        return [
+            'success' => true,
+            'product_id' => $productId,
+            'quantity' => $cappedQty,
+            'cart_count' => $cart['count'],
+            'cart_subtotal' => $cart['subtotal'],
+            'cart' => $cart
+        ];
+    }
+
+    /**
+     * Buy Again: Reorder previous purchase products with fresh price and stock checks
+     */
+    public static function reorderFromOrder(int $orderId, ?int $customerId = null): array {
+        $order = Order::getById($orderId);
+        if (!$order) {
+            return ['success' => false, 'error' => 'Order not found.'];
+        }
+
+        if ($customerId !== null && !empty($order['customer_id']) && (int)$order['customer_id'] !== $customerId) {
+            return ['success' => false, 'error' => 'Unauthorized order access.'];
+        }
+
+        $items = Order::getOrderItems($orderId);
+        if (empty($items)) {
+            return ['success' => false, 'error' => 'No items found in this order to reorder.'];
+        }
+
+        $addedCount = 0;
+        $unavailableItems = [];
+
+        foreach ($items as $item) {
+            if (!empty($item['is_combo']) && !empty($item['combo_id'])) {
+                $combo = Combo::getById((int)$item['combo_id']);
+                if ($combo && $combo['is_available'] && (int)$combo['stock_quantity'] > 0) {
+                    $qty = min((int)$item['quantity'], (int)$combo['stock_quantity']);
+                    self::addCombo((int)$item['combo_id'], $qty);
+                    $addedCount += $qty;
+                } else {
+                    $unavailableItems[] = $item['product_name'] . ' (Combo unavailable)';
+                }
+            } else {
+                $productId = (int)$item['product_id'];
+                $product = Product::getById($productId);
+                if ($product && $product['is_available'] && (int)$product['stock_quantity'] > 0) {
+                    $qty = min((int)$item['quantity'], (int)$product['stock_quantity']);
+                    $optId = !empty($item['preparation_option']) ? $item['preparation_option'] : null;
+                    self::addItem($productId, $qty, $optId);
+                    $addedCount += $qty;
+                } else {
+                    $unavailableItems[] = $item['product_name'] . ' (Out of stock)';
+                }
+            }
+        }
+
+        $cart = self::getCart();
+
+        if ($addedCount === 0) {
+            return [
+                'success' => false,
+                'error' => 'All items from this past order are currently out of stock.',
+                'unavailable_items' => $unavailableItems,
+                'cart' => $cart
+            ];
+        }
+
+        $msg = "Added {$addedCount} item(s) to your cart.";
+        if (!empty($unavailableItems)) {
+            $msg .= " (Note: " . implode(', ', $unavailableItems) . ")";
+        }
+
+        return [
+            'success' => true,
+            'message' => $msg,
+            'added_count' => $addedCount,
+            'unavailable_items' => $unavailableItems,
+            'cart' => $cart
         ];
     }
 }

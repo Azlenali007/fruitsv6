@@ -1,37 +1,52 @@
 <?php
 /**
  * Header Layout Component
- * N.A Fresh Fruits & Coconuts
+ * N.A Fresh Fruits & Coconuts - Dual Store Architecture (Coconut & Juice)
  */
 $cartData = CartService::getCart();
 $cartCount = $cartData['count'];
 $activePage = $activePage ?? 'home';
-$storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
+
+// Resolve Active Store (Coconut vs Juice)
+$currentStore = StoreService::getCurrentStore();
+$storeMeta = StoreService::getStoreMeta($currentStore);
+$isJuiceMode = ($currentStore === 'juice');
+$storeSwitchEnabled = StoreService::isSwitchButtonEnabled();
+$switchToStore = $isJuiceMode ? 'coconut' : 'juice';
+$switchButtonText = $isJuiceMode 
+    ? Setting::get('switch_to_coconut_text', 'Looking for Coconut? 🥥') 
+    : Setting::get('switch_to_juice_text', 'Looking for Juice? 🍹');
+$storeName = $storeMeta['store_name'];
+$pageTitle = $pageTitle ?? ($isJuiceMode 
+    ? '100% Pure Cold-Pressed Juices & Shakes - ' . $storeName 
+    : 'Fresh Coconut Water - ' . $storeName);
 ?>
 <!DOCTYPE html>
-<html lang="en" class="h-full bg-[#f8faf8]">
+<html lang="en" class="h-full <?= $isJuiceMode ? 'bg-[#fffaf5]' : 'bg-[#f8faf8]' ?>" data-store="<?= $currentStore ?>">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title><?= e($pageTitle ?? 'Fresh Coconut Water - N.A Fresh Fruits & Coconuts') ?></title>
-    <meta name="description" content="Pure, natural and refreshing fresh tender coconut water delivered straight from farm. No chemicals, no added sugar.">
-    <meta property="og:title" content="<?= e($pageTitle ?? 'N.A Fresh Fruits & Coconuts') ?>">
-    <meta property="og:description" content="Pure, natural and refreshing fresh tender coconut water.">
+    <title><?= e($pageTitle) ?></title>
+    <meta name="description" content="<?= e($storeMeta['tagline']) ?>. 100% pure, natural and hygienic doorstep delivery in Jaora.">
+    <meta property="og:title" content="<?= e($pageTitle) ?>">
+    <meta property="og:description" content="<?= e($storeMeta['tagline']) ?>">
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" href="/assets/images/icons/icon-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/assets/images/icons/apple-touch-icon.png">
 
     <!-- Web App Manifest & PWA Configuration -->
     <link rel="manifest" href="/manifest.webmanifest">
-    <meta name="theme-color" content="#235d3a">
+    <meta name="theme-color" content="<?= $storeMeta['theme_color'] ?>">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="NA Fruits">
+    <meta name="apple-mobile-web-app-title" content="<?= $isJuiceMode ? 'NA Juices' : 'NA Fruits' ?>">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="csrf-token" content="<?= e(csrf_token()) ?>">
 
-    <!-- PWA & Push Notification Script -->
+    <!-- PWA & Scripts -->
     <script src="/assets/js/pwa-install.js" defer></script>
+    <script src="/assets/js/store-switcher.js" defer></script>
+    <script src="/assets/js/quick-ordering.js" defer></script>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -40,19 +55,30 @@ $storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
             theme: {
                 extend: {
                     colors: {
-                        brand: {
-                            50: '#f0fdf4',
-                            100: '#ebf5ed',
-                            200: '#d1ead6',
-                            300: '#a3d5ad',
-                            400: '#529762',
-                            500: '#2e7d32',
-                            600: '#235d3a', // Primary reference green
-                            700: '#1b4a2e',
-                            800: '#173c26',
-                            900: '#143220',
-                        },
-                        bgsoft: '#f8faf8',
+                        brand: <?= $isJuiceMode ? json_encode([
+                            '50' => '#fff7ed',
+                            '100' => '#ffedd5',
+                            '200' => '#fed7aa',
+                            '300' => '#fdba74',
+                            '400' => '#fb923c',
+                            '500' => '#f97316',
+                            '600' => '#ea580c', // Tangerine primary
+                            '700' => '#c2410c',
+                            '800' => '#9a3412',
+                            '900' => '#7c2d12',
+                        ]) : json_encode([
+                            '50' => '#f0fdf4',
+                            '100' => '#ebf5ed',
+                            '200' => '#d1ead6',
+                            '300' => '#a3d5ad',
+                            '400' => '#529762',
+                            '500' => '#2e7d32',
+                            '600' => '#235d3a', // Emerald primary
+                            '700' => '#1b4a2e',
+                            '800' => '#173c26',
+                            '900' => '#143220',
+                        ]) ?>,
+                        bgsoft: '<?= $isJuiceMode ? '#fffaf5' : '#f8faf8' ?>',
                     },
                     fontFamily: {
                         serif: ['Playfair Display', 'Georgia', 'serif'],
@@ -100,13 +126,35 @@ $storeName = Setting::get('store_name', 'N.A Fresh Fruits & Coconuts');
     <div class="flex flex-col items-center p-6 rounded-3xl bg-white/95 shadow-xl border border-gray-100 max-w-xs text-center transform scale-95 transition-transform duration-200">
         <!-- Modern animated spinner -->
         <div class="relative w-12 h-12 flex items-center justify-center">
-            <div class="w-12 h-12 rounded-full border-3 border-emerald-100 border-t-[#235d3a] animate-spin"></div>
-            <div class="absolute w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center animate-pulse">
-                <span class="w-2 h-2 rounded-full bg-[#235d3a]"></span>
+            <div class="w-12 h-12 rounded-full border-3 <?= $isJuiceMode ? 'border-orange-100 border-t-[#ea580c]' : 'border-emerald-100 border-t-[#235d3a]' ?> animate-spin"></div>
+            <div class="absolute w-5 h-5 rounded-full <?= $isJuiceMode ? 'bg-orange-500/20' : 'bg-emerald-500/20' ?> flex items-center justify-center animate-pulse">
+                <span class="w-2 h-2 rounded-full <?= $isJuiceMode ? 'bg-[#ea580c]' : 'bg-[#235d3a]' ?>"></span>
             </div>
         </div>
-        <p class="text-xs font-bold text-gray-800 mt-3.5 tracking-wide">N.A Fresh Fruits</p>
-        <p class="text-[10px] text-gray-400 mt-0.5">Harvesting freshness...</p>
+        <p class="text-xs font-bold text-gray-800 mt-3.5 tracking-wide"><?= e($storeName) ?></p>
+        <p class="text-[10px] text-gray-400 mt-0.5"><?= $isJuiceMode ? 'Blending fresh citrus & juices...' : 'Harvesting freshness...' ?></p>
+    </div>
+</div>
+
+<!-- Full-Screen Dual Store Coordinated Transition Overlay -->
+<div id="store-transition-overlay" class="fixed inset-0 z-[100] pointer-events-none opacity-0 transition-opacity duration-300 flex flex-col items-center justify-center" aria-hidden="true">
+    <div id="store-transition-backdrop" class="absolute inset-0 transition-all duration-500 ease-out"></div>
+    <div id="store-transition-waves" class="absolute inset-0 overflow-hidden pointer-events-none">
+        <svg class="absolute -bottom-10 left-0 right-0 w-[200%] h-48 opacity-25 animate-wave-slow" viewBox="0 0 1200 120" preserveAspectRatio="none"><path d="M0,0 C150,90 350,-40 500,60 C650,160 900,10 1200,40 L1200,120 L0,120 Z" fill="currentColor"></path></svg>
+    </div>
+    <div id="store-transition-card" class="relative z-10 flex flex-col items-center text-center p-8 max-w-sm mx-4 transform scale-90 opacity-0 transition-all duration-400 ease-out">
+        <div class="relative mb-5">
+            <div id="store-transition-halo" class="absolute -inset-4 rounded-full blur-xl opacity-70 transition-all duration-500"></div>
+            <div id="store-transition-badge" class="relative w-20 h-20 rounded-3xl flex items-center justify-center text-4xl shadow-2xl transform transition-transform duration-500">
+                <span id="store-transition-icon">🍹</span>
+            </div>
+        </div>
+        <h3 id="store-transition-title" class="text-2xl font-black text-white tracking-tight drop-shadow-md">Switching Store...</h3>
+        <p id="store-transition-tagline" class="text-xs font-semibold text-white/90 mt-1.5 max-w-xs drop-shadow-sm">Preparing fresh experience...</p>
+        <div class="mt-6 flex items-center gap-2 bg-black/20 backdrop-blur-sm px-4 py-1.5 rounded-full">
+            <span class="w-2 h-2 rounded-full bg-white animate-ping"></span>
+            <span class="text-[11px] font-bold text-white/90 uppercase tracking-widest">Instant 1-Tap Ordering</span>
+        </div>
     </div>
 </div>
 
@@ -228,6 +276,22 @@ function handlePwaInstall() {
             
             <!-- Logo Section -->
             <a href="/" class="flex items-center gap-2.5 group">
+                <?php if ($isJuiceMode): ?>
+                <!-- Fresh Juice Glass SVG Icon -->
+                <div class="w-9 h-9 sm:w-10 sm:h-10 text-orange-600 flex items-center justify-center transition-transform group-hover:scale-105">
+                    <svg viewBox="0 0 48 48" fill="none" class="w-full h-full" stroke="currentColor">
+                        <path d="M14 12L17 40C17.2 41.8 18.8 43 20.6 43H27.4C29.2 43 30.8 41.8 31 40L34 12" stroke="#ea580c" stroke-width="3" stroke-linecap="round" fill="#ffedd5" fill-opacity="0.5"/>
+                        <path d="M16 20C20 22 28 18 32 20L30.5 39C30.4 39.8 29.5 40.5 28.5 40.5H19.5C18.5 40.5 17.6 39.8 17.5 39L16 20Z" fill="#ea580c" fill-opacity="0.35"/>
+                        <path d="M22 6L28 26" stroke="#f97316" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M30 10C33.5 10 36.5 7.5 37.5 4C34 3.5 30.5 5.5 30 10Z" fill="#fb923c" stroke="#ea580c" stroke-width="1.5"/>
+                        <circle cx="33" cy="7" r="1" fill="#ffffff"/>
+                    </svg>
+                </div>
+                <div class="flex flex-col">
+                    <span class="font-bold text-xl sm:text-2xl tracking-tight text-gray-900 leading-none">N.A</span>
+                    <span class="text-[10px] sm:text-xs font-semibold text-orange-600 tracking-wide">Fresh Fruit Juices & Shakes</span>
+                </div>
+                <?php else: ?>
                 <!-- Palm Tree SVG Icon -->
                 <div class="w-9 h-9 sm:w-10 sm:h-10 text-brand-600 flex items-center justify-center transition-transform group-hover:scale-105">
                     <svg viewBox="0 0 48 48" fill="none" class="w-full h-full" stroke="currentColor">
@@ -245,6 +309,7 @@ function handlePwaInstall() {
                     <span class="font-bold text-xl sm:text-2xl tracking-tight text-gray-900 leading-none">N.A</span>
                     <span class="text-[10px] sm:text-xs font-medium text-gray-500 tracking-wide">Fresh Fruits & Coconuts</span>
                 </div>
+                <?php endif; ?>
             </a>
 
             <?php 
@@ -258,7 +323,7 @@ function handlePwaInstall() {
                     Home
                 </a>
                 <a href="/shop" class="<?= $activePage === 'shop' ? 'text-brand-600 font-semibold border-b-2 border-brand-600 pb-1' : 'text-gray-600 hover:text-brand-600 transition' ?>">
-                    Shop
+                    <?= $isJuiceMode ? 'Juice Menu' : 'Shop' ?>
                 </a>
                 <?php if ($isCustomerLoggedIn): ?>
                 <a href="/my-orders" class="<?= $activePage === 'track' ? 'text-brand-600 font-semibold border-b-2 border-brand-600 pb-1' : 'text-gray-600 hover:text-brand-600 transition' ?>">
@@ -277,8 +342,33 @@ function handlePwaInstall() {
                 </a>
             </nav>
 
-            <!-- Right Icons (PWA Install, Search, Cart, Profile, Admin) -->
-            <div class="flex items-center space-x-2.5 sm:space-x-3.5">
+            <!-- Right Icons (Store Switcher, PWA Install, Search, Cart, Profile) -->
+            <div class="flex items-center space-x-2 sm:space-x-3">
+                <?php if ($storeSwitchEnabled): ?>
+                <!-- Prominent Dual Store Switching Button (Desktop) -->
+                <button 
+                    type="button" 
+                    data-switch-store="<?= $switchToStore ?>" 
+                    class="store-switch-btn group relative hidden md:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-xs <?= $isJuiceMode ? 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white ring-2 ring-emerald-300/40 shadow-emerald-600/20' : 'bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-600 hover:to-amber-600 text-white ring-2 ring-amber-300/50 shadow-orange-500/20' ?>"
+                    title="Switch to <?= $switchToStore === 'juice' ? 'Juice Store' : 'Coconut Store' ?>"
+                >
+                    <span class="text-sm transition-transform group-hover:rotate-12"><?= $isJuiceMode ? '🥥' : '🍹' ?></span>
+                    <span class="tracking-tight"><?= e($switchButtonText) ?></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                </button>
+
+                <!-- Prominent Store Switch Button (Mobile Header) -->
+                <button 
+                    type="button" 
+                    data-switch-store="<?= $switchToStore ?>" 
+                    class="store-switch-btn md:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold text-white transition active:scale-95 shadow-2xs <?= $isJuiceMode ? 'bg-gradient-to-r from-emerald-600 to-green-600' : 'bg-gradient-to-r from-orange-500 to-amber-500' ?>"
+                    title="Switch Store"
+                >
+                    <span><?= $isJuiceMode ? '🥥' : '🍹' ?></span>
+                    <span class="truncate max-w-[80px]"><?= $isJuiceMode ? 'Coconut' : 'Juice' ?></span>
+                </button>
+                <?php endif; ?>
+
                 <!-- PWA Install Button (Auto-appears when installable or clicked) -->
                 <button 
                     type="button" 
@@ -304,11 +394,9 @@ function handlePwaInstall() {
                     <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 0 0-8 0v4M5 9h14l1 12H4L5 9z"></path>
                     </svg>
-                    <?php if ($cartCount > 0): ?>
-                    <span class="absolute -top-1 -right-1 bg-brand-600 text-white text-[10px] sm:text-xs font-bold rounded-full h-4 w-4 sm:h-5 sm:w-5 flex items-center justify-center shadow-xs">
+                    <span class="cart-count-badge <?= ($cartCount > 0) ? '' : 'hidden' ?> absolute -top-1 -right-1 bg-brand-600 text-white text-[10px] sm:text-xs font-bold rounded-full h-4 w-4 sm:h-5 sm:w-5 flex items-center justify-center shadow-xs">
                         <?= $cartCount ?>
                     </span>
-                    <?php endif; ?>
                 </a>
 
                 <!-- Customer Profile / Login Button -->
@@ -355,6 +443,28 @@ function handlePwaInstall() {
             </button>
         </div>
 
+        <?php if ($storeSwitchEnabled): ?>
+        <!-- Mobile Drawer Store Switcher Banner -->
+        <div class="p-3.5 rounded-2xl border <?= $isJuiceMode ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200' : 'bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200' ?>">
+            <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                    <span class="text-2xl p-1.5 rounded-xl bg-white shadow-2xs"><?= $isJuiceMode ? '🥥' : '🍹' ?></span>
+                    <div>
+                        <span class="text-xs font-black <?= $isJuiceMode ? 'text-emerald-950' : 'text-orange-950' ?> block"><?= e($switchButtonText) ?></span>
+                        <span class="text-[10px] <?= $isJuiceMode ? 'text-emerald-700' : 'text-orange-700' ?>"><?= $isJuiceMode ? 'Tender coconuts & fresh malai' : 'Cold-pressed pure juices & shakes' ?></span>
+                    </div>
+                </div>
+                <button 
+                    type="button" 
+                    data-switch-store="<?= $switchToStore ?>" 
+                    class="store-switch-btn shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-xs <?= $isJuiceMode ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-orange-600 hover:bg-orange-700' ?>"
+                >
+                    Switch &rarr;
+                </button>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <!-- Customer Status in Mobile Drawer -->
         <?php if ($isCustomerLoggedIn): ?>
         <div class="bg-emerald-50 rounded-2xl p-3 flex items-center justify-between text-xs">
@@ -383,8 +493,8 @@ function handlePwaInstall() {
         <?php endif; ?>
 
         <a href="/" class="block text-base font-medium <?= $activePage === 'home' ? 'text-brand-600' : 'text-gray-700' ?>">Home</a>
-        <a href="/shop" class="block text-base font-medium <?= $activePage === 'shop' ? 'text-brand-600' : 'text-gray-700' ?>">Shop Tender Coconut</a>
-        <a href="/cart" class="block text-base font-medium <?= $activePage === 'cart' ? 'text-brand-600' : 'text-gray-700' ?>">Cart (<?= $cartCount ?>)</a>
+        <a href="/shop" class="block text-base font-medium <?= $activePage === 'shop' ? 'text-brand-600' : 'text-gray-700' ?>"><?= $isJuiceMode ? 'Juice Menu' : 'Shop Tender Coconut' ?></a>
+        <a href="/cart" class="block text-base font-medium <?= $activePage === 'cart' ? 'text-brand-600' : 'text-gray-700' ?>">Cart (<span class="cart-count-badge"><?= $cartCount ?></span>)</a>
 
         <?php if ($isCustomerLoggedIn): ?>
         <a href="/account" class="block text-base font-medium <?= $activePage === 'profile' ? 'text-brand-600' : 'text-gray-700' ?>">My Account</a>
