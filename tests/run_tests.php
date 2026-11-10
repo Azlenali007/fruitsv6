@@ -231,6 +231,14 @@ require_once __DIR__ . '/test_dual_store_experience.php';
 $passCount += $dualPass;
 $failCount += $dualFail;
 
+// ---------------------------------------------------------
+// 19. CRITICAL FIXES & SECURITY HARDENING SUITE
+// ---------------------------------------------------------
+echo "\n";
+require_once __DIR__ . '/test_critical_fixes_and_security.php';
+$passCount += $critPass;
+$failCount += $critFail;
+
 echo "\n========================================================\n";
 echo "OVERALL SYSTEM SUMMARY: {$passCount} PASSED, {$failCount} FAILED\n";
 echo "========================================================\n";

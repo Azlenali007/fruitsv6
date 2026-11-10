@@ -474,6 +474,16 @@ try {
         }
     }
 
+    $secMigrationFile = __DIR__ . '/migrations/013_security_hardening.sql';
+    if (file_exists($secMigrationFile)) {
+        $checkLogs = $pdo->query("SHOW TABLES LIKE 'admin_activity_logs'")->rowCount();
+        if ($checkLogs === 0) {
+            $secSql = file_get_contents($secMigrationFile);
+            $pdo->exec($secSql);
+            echo "Security hardening schema migrated successfully.\n";
+        }
+    }
+
     // Record installation lock file
     $lockData = json_encode([
         'installed_at' => date('Y-m-d H:i:s'),

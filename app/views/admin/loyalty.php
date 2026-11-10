@@ -69,7 +69,7 @@ $stmtRecentTx = $pdo->query("
     SELECT t.*, c.name AS customer_name, c.phone AS customer_phone, u.name AS admin_name
     FROM `loyalty_transactions` t
     JOIN `customers` c ON t.customer_id = c.id
-    LEFT JOIN `users` u ON t.admin_id = u.id
+    LEFT JOIN `admins` u ON t.admin_id = u.id
     ORDER BY t.id DESC
     LIMIT 30
 ");

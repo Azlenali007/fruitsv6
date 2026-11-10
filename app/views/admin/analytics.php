@@ -292,13 +292,13 @@ require_once __DIR__ . '/layout-header.php';
                 <tbody class="divide-y divide-gray-50">
                     <template x-for="v in liveVisitors" :key="v.session_token">
                         <tr class="hover:bg-gray-50/80 transition">
-                            <td class="py-2.5 px-3 font-mono font-bold text-gray-800" x-text="v.visitor_id.substring(0, 14) + '...'"></td>
+                            <td class="py-2.5 px-3 font-mono font-bold text-gray-800" x-text="(v.visitor_id ? v.visitor_id.substring(0, 14) : (v.session_token ? v.session_token.substring(0, 14) : 'Visitor')) + '...'"></td>
                             <td class="py-2.5 px-3">
-                                <span class="capitalize font-semibold text-gray-700" x-text="v.device_type"></span>
+                                <span class="capitalize font-semibold text-gray-700" x-text="v.device_type || 'Desktop'"></span>
                                 <span class="text-[11px] text-gray-400" x-text="'• ' + (v.browser || 'Browser')"></span>
                             </td>
-                            <td class="py-2.5 px-3 font-bold text-emerald-700" x-text="v.source_name"></td>
-                            <td class="py-2.5 px-3 font-mono text-[11px] text-gray-600 truncate max-w-xs" x-text="v.current_path"></td>
+                            <td class="py-2.5 px-3 font-bold text-emerald-700" x-text="v.source_name || 'Direct'"></td>
+                            <td class="py-2.5 px-3 font-mono text-[11px] text-gray-600 truncate max-w-xs" x-text="v.current_path || '/'"></td>
                             <td class="py-2.5 px-3 text-gray-500" x-text="(v.city || 'Jaora') + ', ' + (v.country || 'India')"></td>
                             <td class="py-2.5 px-3 text-right font-medium text-emerald-800">
                                 <span x-text="v.seconds_ago !== undefined ? (v.seconds_ago < 60 ? v.seconds_ago + 's ago' : Math.floor(v.seconds_ago/60) + 'm ago') : 'Just now'"></span>
@@ -306,7 +306,7 @@ require_once __DIR__ . '/layout-header.php';
                         </tr>
                     </template>
                     <?php if (empty($liveVisitors)): ?>
-                    <tr x-show="liveVisitors.length === 0">
+                    <tr x-show="!liveVisitors || liveVisitors.length === 0">
                         <td colspan="6" class="py-8 text-center text-gray-400">
                             No external visitors active right now. Open storefront in another tab to observe live heartbeat.
                         </td>

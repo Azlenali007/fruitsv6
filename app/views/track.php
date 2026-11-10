@@ -35,6 +35,13 @@ if ($order) {
     $stmtStory = $pdo->prepare("SELECT * FROM `loyalty_story_submissions` WHERE `order_id` = ? LIMIT 1");
     $stmtStory->execute([$order['id']]);
     $storySubmission = $stmtStory->fetch(PDO::FETCH_ASSOC);
+    $canViewOtp = (
+        AuthService::check() ||
+        (CustomerAuthService::check() && (int)$order['customer_id'] === CustomerAuthService::id()) ||
+        (!empty($_GET['h']) && hash_equals((string)$order['tracking_hash'], (string)$_GET['h']))
+    );
+} else {
+    $canViewOtp = false;
 }
 ?>
 
@@ -50,7 +57,7 @@ if ($order) {
     'customerLng' => !empty($order['longitude']) ? (float)$order['longitude'] : 75.124683,
     'riderLat' => $rider && $rider['current_lat'] ? (float)$rider['current_lat'] : null,
     'riderLng' => $rider && $rider['current_lng'] ? (float)$rider['current_lng'] : null,
-    'plainOtp' => $otpInfo['plain_otp_for_dev'] ?? null,
+    'plainOtp' => ($canViewOtp ? ($otpInfo['plain_otp_for_dev'] ?? null) : null),
     'isOtpVerified' => !empty($otpInfo['verified_at']),
     'storySubmission' => $storySubmission
 ]), ENT_QUOTES, 'UTF-8') ?>)">

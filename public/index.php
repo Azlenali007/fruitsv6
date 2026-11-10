@@ -4,10 +4,11 @@
  * N.A Fresh Fruits & Coconuts (PHP 8.2 & MySQL)
  */
 
-// Allow PHP built-in web server to serve existing static files directly
+// Allow PHP built-in web server to serve whitelisted static assets directly (never .php or raw scripts)
 if (php_sapi_name() === 'cli-server') {
-    $staticPath = __DIR__ . parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-    if (is_file($staticPath)) {
+    $reqPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '';
+    $staticPath = __DIR__ . $reqPath;
+    if (is_file($staticPath) && preg_match('/\.(css|js|map|png|jpg|jpeg|gif|webp|svg|ico|woff|woff2|ttf|eot|pdf|webmanifest|json|txt|xml)$/i', $staticPath)) {
         return false;
     }
 }
@@ -39,10 +40,16 @@ foreach ($blockedPrefixes as $prefix) {
     }
 }
 
-// 3. Block Direct Web Access to Protected File Extensions
-if (preg_match('/\.(sql|log|lock|env|md|sh|yml|yaml|ini|bak|swp|ts|tsx)$/i', $uri)) {
+// 3. Block Direct Web Access to Protected File Extensions and Configuration Files
+if (preg_match('/\.(sql|log|lock|env|md|sh|yml|yaml|ini|bak|swp|ts|tsx|conf|htaccess)$/i', $uri)) {
     http_response_code(403);
     exit('Direct access to protected file types is forbidden.');
+}
+
+// 3b. Block Script Execution in Public Assets and Uploads Directory
+if (str_starts_with($uri, '/assets/uploads/') && preg_match('/\.(php|phtml|phar|cgi|pl|py|sh)$/i', $uri)) {
+    http_response_code(403);
+    exit('Script execution in uploads directory is strictly forbidden.');
 }
 
 // 4. Validate Host Header (Mitigate Host Header Injection & Poisoning)
@@ -1148,23 +1155,46 @@ try {
         // Admin Routes
         // ------------------------------------------------
         case '/admin/login':
+            if (isset($_GET['reset_2fa'])) {
+                unset($_SESSION['na_admin_2fa_pending']);
+                header('Location: /admin/login');
+                exit;
+            }
             if (AuthService::check()) {
                 header('Location: /admin');
                 exit;
             }
             $loginError = '';
+            $loginNotice = '';
+            $requires2fa = !empty($_SESSION['na_admin_2fa_pending']);
             if ($method === 'POST') {
                 if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
-                    $loginError = 'Session token mismatch. Please try again.';
-                } else {
-                    $username = trim($_POST['username'] ?? '');
-                    $password = $_POST['password'] ?? '';
-                    $res = AuthService::login($username, $password, $clientIp);
+                    $loginError = 'Security token mismatch. Please try again.';
+                } elseif (!empty($_POST['action']) && $_POST['action'] === 'verify_2fa') {
+                    $totpCode = trim($_POST['totp_code'] ?? '');
+                    $res = AuthService::complete2FA($totpCode, $clientIp);
                     if ($res['success']) {
                         $redirect = $_SESSION['admin_intended_url'] ?? '/admin';
                         unset($_SESSION['admin_intended_url']);
                         header('Location: ' . $redirect);
                         exit;
+                    } else {
+                        $loginError = $res['error'] ?? 'Invalid 2FA code.';
+                        $requires2fa = true;
+                    }
+                } else {
+                    $username = trim($_POST['username'] ?? '');
+                    $password = $_POST['password'] ?? '';
+                    $totpCode = !empty($_POST['totp_code']) ? trim($_POST['totp_code']) : null;
+                    $res = AuthService::login($username, $password, $clientIp, $totpCode);
+                    if ($res['success']) {
+                        $redirect = $_SESSION['admin_intended_url'] ?? '/admin';
+                        unset($_SESSION['admin_intended_url']);
+                        header('Location: ' . $redirect);
+                        exit;
+                    } elseif (!empty($res['requires_2fa'])) {
+                        $requires2fa = true;
+                        $loginNotice = $res['message'] ?? 'Please enter the 6-digit code from your authenticator app.';
                     } else {
                         $loginError = $res['error'];
                     }
@@ -2152,6 +2182,12 @@ try {
         // Live Traffic & Visitor Analytics Routes
         // ------------------------------------------------
         case '/admin/analytics':
+        case '/admin/analytics.php':
+        case '/admin/traffic':
+        case '/admin/traffic.php':
+        case '/admin/live-traffic':
+        case '/admin/live-traffic.php':
+        case '/admin/livetraffic':
             AuthService::requireAdmin();
             $rangePreset = $_GET['range'] ?? 'today';
             $customFrom = $_GET['from'] ?? null;
@@ -2161,6 +2197,56 @@ try {
             $liveCount = AnalyticsService::getActiveVisitorCount();
             $liveVisitors = AnalyticsService::getActiveVisitors(15);
             require __DIR__ . '/../app/views/admin/analytics.php';
+            break;
+
+        // ------------------------------------------------
+        // Admin Security & Audit Trail Routes
+        // ------------------------------------------------
+        case '/admin/security':
+        case '/admin/security.php':
+            AuthService::requireAdmin();
+            require __DIR__ . '/../app/views/admin/security.php';
+            break;
+
+        case '/admin/security/enable-2fa':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /admin/security');
+                    exit;
+                }
+                $secret = trim($_POST['secret'] ?? '');
+                $code = trim($_POST['code'] ?? '');
+                if (!empty($secret) && !empty($code) && TotpService::verifyCode($secret, $code)) {
+                    $adminId = AuthService::id();
+                    Admin::enableTwoFactor($adminId, $secret);
+                    unset($_SESSION['na_temp_totp_secret']);
+                    AdminAuditService::log('ENABLE_2FA', 'admin', (string)$adminId);
+                    set_flash('success', 'Two-Factor Authentication (2FA) successfully activated for your account.');
+                } else {
+                    set_flash('error', 'Invalid 6-digit verification code. Please check your authenticator clock and try again.');
+                }
+            }
+            header('Location: /admin/security');
+            exit;
+            break;
+
+        case '/admin/security/disable-2fa':
+            AuthService::requireAdmin();
+            if ($method === 'POST') {
+                if (!verify_csrf_token($_POST[CSRF_TOKEN_KEY] ?? '')) {
+                    set_flash('error', 'Security token expired.');
+                    header('Location: /admin/security');
+                    exit;
+                }
+                $adminId = AuthService::id();
+                Admin::disableTwoFactor($adminId);
+                AdminAuditService::log('DISABLE_2FA', 'admin', (string)$adminId);
+                set_flash('info', 'Two-Factor Authentication has been disabled.');
+            }
+            header('Location: /admin/security');
+            exit;
             break;
 
         case '/api/analytics/track':
@@ -2331,8 +2417,17 @@ try {
             break;
             break;
 
+        // Customer Loyalty & Rewards Page Aliases
+        case '/loyalty':
+        case '/rewards':
+            CustomerAuthService::requireLogin();
+            header('Location: /account');
+            exit;
+            break;
+
         // Admin Loyalty Management Routes
         case '/admin/loyalty':
+        case '/admin/loyalty.php':
             AuthService::requireAdmin();
             require __DIR__ . '/../app/views/admin/loyalty.php';
             break;
